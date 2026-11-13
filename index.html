@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Campus Space — Find your spot</title>
+
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/app.js" defer></script>
+</head>
+
+<body>
+<aside class="sidebar">
+    <a class="brand" href="./">
+        <span class="brand-icon">⌘</span>
+        <span>campus space</span>
+    </a>
+
+    <div class="campus-label">
+        <strong>Your campus</strong>
+        <span>Campus occupancy demo</span>
+    </div>
+
+    <nav aria-label="Main navigation">
+        <button
+                class="nav-button active"
+                data-view="all"
+                aria-pressed="true"
+        >
+            ▦ &nbsp; Explore spaces
+        </button>
+
+        <button
+                class="nav-button"
+                data-view="saved"
+                aria-pressed="false"
+        >
+            ☆ &nbsp; Saved spaces
+        </button>
+    </nav>
+
+    <p class="sidebar-note">
+        A little less searching.<br>
+        A little more doing.
+    </p>
+</aside>
+
+<main>
+    <header class="topbar">
+        <span>Campus / Explore spaces</span>
+        <span class="demo-badge">● Demo data</span>
+    </header>
+
+    <section class="page-heading">
+        <h1>Find your spot.</h1>
+
+        <p>
+            A quiet corner, a study session, or a seat at lunch.
+            See what’s open.
+        </p>
+    </section>
+
+    <section class="stats" aria-label="Campus occupancy summary">
+        <article class="stat">
+            <span class="stat-label">Seats available</span>
+            <strong id="available-seats">0</strong>
+            <span class="stat-description">Across all campus spaces</span>
+        </article>
+
+        <article class="stat">
+            <span class="stat-label">Spaces to explore</span>
+            <strong id="space-count">0</strong>
+            <span class="stat-description">Study, focus, and refuel</span>
+        </article>
+
+        <article class="stat">
+            <span class="stat-label">Campus occupancy</span>
+            <strong id="campus-occupancy">0%</strong>
+            <span class="stat-description">Find a little room to settle in</span>
+        </article>
+    </section>
+
+    <section class="toolbar" aria-label="Filter and search spaces">
+        <div class="category-tabs" aria-label="Space categories">
+            <button
+                    class="category-button active"
+                    data-category="All"
+                    aria-pressed="true"
+            >
+                All spaces
+            </button>
+
+            <button
+                    class="category-button"
+                    data-category="Library"
+                    aria-pressed="false"
+            >
+                Libraries
+            </button>
+
+            <button
+                    class="category-button"
+                    data-category="Study room"
+                    aria-pressed="false"
+            >
+                Study rooms
+            </button>
+
+            <button
+                    class="category-button"
+                    data-category="Dining hall"
+                    aria-pressed="false"
+            >
+                Dining halls
+            </button>
+        </div>
+
+        <label class="search">
+            <span class="sr-only">Search spaces</span>
+            <input
+                    id="search-input"
+                    type="search"
+                    placeholder="Search spaces..."
+            >
+        </label>
+
+        <label>
+            <span class="sr-only">Sort spaces</span>
+
+            <select id="sort-select">
+                <option value="recommended">Recommended</option>
+                <option value="available">Most available</option>
+                <option value="quiet">Least crowded</option>
+            </select>
+        </label>
+    </section>
+
+    <section aria-labelledby="results-heading">
+        <div class="results-header">
+            <div>
+                <h2 id="results-heading">Around campus</h2>
+                <span id="results-count" aria-live="polite"></span>
+            </div>
+
+            <div class="legend" aria-label="Occupancy legend">
+                <span><i class="dot available"></i> Available</span>
+                <span><i class="dot moderate"></i> Filling up</span>
+                <span><i class="dot busy"></i> Busy</span>
+            </div>
+        </div>
+
+        <div id="spaces-grid" class="spaces-grid"></div>
+    </section>
+
+    <section class="tip">
+        <span class="tip-icon" aria-hidden="true">☀</span>
+
+        <div>
+            <strong>A little room to breathe.</strong>
+            <p id="recommendation"></p>
+        </div>
+    </section>
+
+    <footer>
+      <span>
+        Occupancy estimates help you plan. A seat isn’t guaranteed.
+      </span>
+
+        <span>Sample data · Reports saved on this device</span>
+    </footer>
+</main>
+
+<dialog id="space-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-heading">
+        <span id="dialog-category" class="demo-badge"></span>
+
+        <button
+                id="close-dialog"
+                class="icon-button"
+                aria-label="Close space details"
+        >
+            ✕
+        </button>
+    </div>
+
+    <h2 id="dialog-title"></h2>
+    <p id="dialog-location"></p>
+    <p id="dialog-amenities"></p>
+
+    <div class="dialog-availability">
+        <strong id="dialog-available"></strong>
+        <span>seats free</span>
+    </div>
+
+    <p class="dialog-description">
+        Report a headcount to update this demo on your device.
+        Reports are not shared with other users.
+    </p>
+
+    <form id="occupancy-form">
+        <label for="occupancy-input">
+            People currently using this space
+        </label>
+
+        <div class="report-controls">
+            <input
+                    id="occupancy-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    required
+            >
+
+            <button class="primary-button" type="submit">
+                Update
+            </button>
+        </div>
+
+        <p id="report-feedback" role="status" aria-live="polite"></p>
+    </form>
+</dialog>
+</body>
+</html>
