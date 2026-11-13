@@ -1,0 +1,10 @@
+# macOS & Windows system files
+.DS_Store
+Thumbs.db
+
+# Environment secrets & API keys
+.env
+
+# Editor & dependency folders
+.vscode/
+node_modules/
