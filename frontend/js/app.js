@@ -68,12 +68,18 @@ function hasCurrentReport(space) {
         Number.isFinite(timestamp) &&
         Date.now() < timestamp + space.stale_after_minutes * 60000;
 }
+function hasKnownCapacity(space) {
+    return Number.isInteger(space.capacity) && space.capacity > 0;
+}
+function hasSeatEstimate(space) {
+    return hasCurrentReport(space) && hasKnownCapacity(space);
+}
 function getAvailableSeats(space) {
-    return hasCurrentReport(space) ? space.capacity - space.occupied : null;
+    return hasSeatEstimate(space) ? space.capacity - space.occupied : null;
 }
 
 function getOccupancyPercentage(space) {
-    return hasCurrentReport(space)
+    return hasSeatEstimate(space)
         ? Math.round(space.occupied / space.capacity * 100) : null;
 }
 
@@ -81,6 +87,7 @@ function getOccupancyStatus(space) {
     if (!hasCurrentReport(space)) {
         return { className: "unknown", label: space.occupancy_updated_at ? "Stale" : "No reports" };
     }
+    if (!hasKnownCapacity(space)) return { className: "unknown", label: "Reported" };
     const ratio = space.occupied / space.capacity;
     if (ratio >= 1) return { className: "busy", label: "Full" };
     if (ratio >= .8) return { className: "busy", label: "Busy" };
@@ -113,7 +120,8 @@ function getReportLabel(space) {
     const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
     const age = minutes < 1 ? "just now" : minutes < 60 ? `${minutes}m ago` :
         new Date(timestamp).toLocaleString();
-    return `${hasCurrentReport(space) ? "Updated" : "Stale report"} · ${age}`;
+    const source = space.occupancy_source === "demo" ? "SIMULATED" : "Reported";
+    return `${source}${hasCurrentReport(space) ? "" : " · stale"} · ${age}${space.capacity_is_estimated ? " · demo capacity" : ""}`;
 }
 
 /* Decorative SVG illustrations */
@@ -232,24 +240,29 @@ function getArtwork(type) {
 /* Rendering */
 
 function renderSummary() {
-    const known = spaces.filter(hasCurrentReport);
+    const known = spaces.filter(hasSeatEstimate);
     const capacity = known.reduce((sum, space) => sum + space.capacity, 0);
     const occupied = known.reduce((sum, space) => sum + space.occupied, 0);
     elements.availableSeats.textContent = capacity ? (capacity - occupied).toLocaleString() : "—";
     elements.spaceCount.textContent = loading ? "—" : spaces.length;
     elements.campusOccupancy.textContent = capacity ? `${Math.round(occupied / capacity * 100)}%` : "—";
     const descriptions = document.querySelectorAll(".stat-description");
-    if (descriptions[0]) descriptions[0].textContent = `${known.length} of ${spaces.length} spaces have fresh reports`;
-    if (descriptions[2]) descriptions[2].textContent = "Based on spaces with fresh reports";
+    if (descriptions[0]) descriptions[0].textContent = `${known.length} of ${spaces.length} spaces have fresh seat estimates`;
+    if (descriptions[2]) descriptions[2].textContent =
+        known.some(space => space.occupancy_source === "demo" || space.capacity_is_estimated)
+            ? "Includes simulated counts / demo capacities"
+            : "Based on fresh reports with known capacity";
 }
 
 function getVisibleSpaces() {
-    const query = state.search.trim().toLowerCase();
+    const query = elements.search.value.trim().toLowerCase();
 
     const visibleSpaces = spaces.filter(space => {
         const matchesCategory =
             state.category === "All" ||
-            space.category === state.category;
+            (state.category === "Residence halls"
+                ? space.is_residence_hall === true
+                : space.category === state.category);
 
         const matchesView =
             state.view === "all" ||
@@ -276,8 +289,8 @@ function getVisibleSpaces() {
     if (state.sort === "quiet") {
         visibleSpaces.sort(
             (a, b) =>
-                (hasCurrentReport(a) ? a.occupied / a.capacity : Infinity) -
-                (hasCurrentReport(b) ? b.occupied / b.capacity : Infinity)
+                (hasSeatEstimate(a) ? a.occupied / a.capacity : Infinity) -
+                (hasSeatEstimate(b) ? b.occupied / b.capacity : Infinity)
         );
     }
 
@@ -291,11 +304,11 @@ function createSpaceCard(space) {
     const isSaved = favorites.has(space.id);
 
     const name = escapeHtml(space.name);
-    const known = hasCurrentReport(space);
+    const known = hasSeatEstimate(space);
     const background = /^#[0-9a-f]{6}$/i.test(space.background) ? space.background : "#e4e8dc";
 
     return `
-    <article class="space-card">
+    <article class="space-card" ${space.is_residence_hall ? `data-detail="${space.id}" style="cursor:pointer"` : ""}>
       <div
         class="space-art"
         style="--art-background: ${background}"
@@ -332,10 +345,10 @@ function createSpaceCard(space) {
         <div class="occupancy-summary">
           <span>
             <strong>${known ? available : "—"}</strong>
-            ${known ? `of ${space.capacity} seats free` : "Availability unknown"}
+            ${known ? `of ${space.capacity} ${space.capacity_is_estimated ? "demo seats" : "seats"} free` : "Availability unknown"}
           </span>
 
-          <span>${known ? `${percentage}% occupied` : status.label}</span>
+          <span>${known ? `${percentage}% occupied` : hasCurrentReport(space) ? `${space.occupied} people reported` : status.label}</span>
         </div>
 
         ${known ? `
@@ -343,7 +356,7 @@ function createSpaceCard(space) {
           aria-label="${name} occupancy" aria-valuemin="0"
           aria-valuemax="${space.capacity}" aria-valuenow="${space.occupied}">
           <div class="occupancy-fill ${status.className}" style="width:${percentage}%"></div>
-        </div>` : `<p class="space-location" style="margin:10px 0 15px">Capacity: ${space.capacity} seats · A fresh report is needed</p>`}
+        </div>` : `<p class="space-location" style="margin:10px 0 15px">Capacity: ${hasKnownCapacity(space) ? `${space.capacity} seats` : "Unknown"} · ${hasCurrentReport(space) ? "Headcount reported" : "A fresh report is needed"}</p>`}
 
         <div class="amenities">
           ${space.amenities.map(amenity => `
@@ -358,7 +371,7 @@ function createSpaceCard(space) {
             class="details-button"
             data-detail="${space.id}"
           >
-            View space ↗
+            ${space.is_residence_hall ? "View study rooms ↗" : "View space ↗"}
           </button>
         </div>
       </div>
@@ -398,10 +411,10 @@ function renderSpaces() {
 }
 
 function renderRecommendation() {
-    const leastCrowded = spaces.filter(hasCurrentReport).sort(
+    const leastCrowded = spaces.filter(hasSeatEstimate).sort(
         (a, b) =>
-            (hasCurrentReport(a) ? a.occupied / a.capacity : Infinity) -
-            (hasCurrentReport(b) ? b.occupied / b.capacity : Infinity)
+            (hasSeatEstimate(a) ? a.occupied / a.capacity : Infinity) -
+            (hasSeatEstimate(b) ? b.occupied / b.capacity : Infinity)
     )[0];
 
     if (!leastCrowded) {
@@ -412,7 +425,7 @@ function renderRecommendation() {
     }
 
     elements.recommendation.textContent =
-        `${leastCrowded.name} has the lowest reported occupancy, ` +
+        `${leastCrowded.name} has the lowest ${leastCrowded.occupancy_source === "demo" || leastCrowded.capacity_is_estimated ? "demo" : "reported"} occupancy, ` +
         `with ${getAvailableSeats(leastCrowded)} of ` +
         `${leastCrowded.capacity} seats free.`;
 }
@@ -446,14 +459,24 @@ function openSpaceDetails(spaceId) {
     }
 
     state.selectedSpaceId = spaceId;
+    resetResidenceDetails();
+    if (space.is_residence_hall) {
+        openResidenceRooms(space);
+        return;
+    }
 
     elements.dialogCategory.textContent = space.category;
     elements.dialogTitle.textContent = space.name;
     elements.dialogLocation.textContent = space.location;
-    elements.dialogAmenities.textContent = space.amenities.join(" · ");
+    elements.dialogAmenities.textContent = [
+        ...space.amenities,
+        ...(space.occupancy_source === "demo" ? ["SIMULATED occupancy"] : []),
+        ...(space.capacity_is_estimated ? [space.capacity_basis || "Demo capacity — not verified"] : [])
+    ].join(" · ");
     elements.dialogAvailable.textContent = getAvailableSeats(space) ?? "Unknown";
 
-    elements.occupancyInput.max = space.capacity;
+    if (hasKnownCapacity(space)) elements.occupancyInput.max = space.capacity;
+    else elements.occupancyInput.removeAttribute("max");
     elements.occupancyInput.value = hasCurrentReport(space) ? space.occupied : "";
     elements.occupancyInput.setCustomValidity("");
 
@@ -471,8 +494,8 @@ async function submitOccupancyReport(event) {
     if (!space) return;
     const raw = elements.occupancyInput.value.trim();
     const occupied = Number(raw);
-    if (!raw || !Number.isInteger(occupied) || occupied < 0 || occupied > space.capacity) {
-        elements.occupancyInput.setCustomValidity(`Enter a whole number between 0 and ${space.capacity}.`);
+    if (!raw || !Number.isInteger(occupied) || occupied < 0 || (hasKnownCapacity(space) && occupied > space.capacity)) {
+        elements.occupancyInput.setCustomValidity(hasKnownCapacity(space) ? `Enter a whole number between 0 and ${space.capacity}.` : "Enter a nonnegative whole number.");
         elements.occupancyInput.reportValidity();
         return;
     }
@@ -489,7 +512,6 @@ async function submitOccupancyReport(event) {
         const { data: { session }, error: sessionError } = await client.auth.getSession();
         if (sessionError) throw sessionError;
         if (!session) {
-            showFeedback("Sign in is required. This page still needs a sign-in form before you can submit reports.");
             showFeedback("Sign in using the email form near the top of the page, then submit your report again.");
             return;
         }
@@ -506,6 +528,124 @@ async function submitOccupancyReport(event) {
         submitting = false;
         button.disabled = false;
     }
+}
+
+/* Residence hall study rooms */
+let residenceRequest = 0;
+function resetResidenceDetails() {
+    residenceRequest += 1;
+    document.getElementById("residence-room-browser")?.remove();
+    elements.reportForm.hidden = false;
+    const availability = document.querySelector(".dialog-availability");
+    if (availability) availability.hidden = false;
+    const description = document.querySelector(".dialog-description");
+    if (description) description.hidden = false;
+    if (availability) availability.style.display = "";
+    if (description) description.style.display = "";
+    elements.dialog.style.width = "";
+}
+
+function roomCard(room) {
+    const free = room.capacity - room.occupied;
+    return `<button type="button" data-room-id="${room.id}" style="text-align:left;padding:15px;border:1px solid #e1e7df;border-radius:10px;background:#f7f8f3;min-width:0">
+    <strong>Study room ${room.room_number}</strong>
+    <span style="display:block;margin:8px 0;color:#176249">${free} of ${room.capacity} seats free</span>
+    <span style="font-size:11px;color:#7b8680">${room.is_demo ? "SIMULATED · " : ""}${room.occupied} people · View room ↗</span>
+  </button>`;
+}
+
+function renderResidenceFloors(container, space, rooms) {
+    const floors = [...new Set(rooms.map(room => room.floor_number))].sort((a,b) => a-b);
+    container.innerHTML = `<p style="font-size:12px">Demo layout: two study rooms per floor. Room locations and occupancy are illustrative.${space.floor_count_is_estimated ? " Floor count is estimated." : " Floor count comes from the supplied map data."}</p>` +
+        floors.map(floor => `<section style="margin-top:20px" aria-label="Floor ${floor}">
+      <h3>Floor ${floor}</h3>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px">
+        ${rooms.filter(room => room.floor_number === floor).map(roomCard).join("")}
+      </div></section>`).join("");
+    container.querySelectorAll("[data-room-id]").forEach(button => {
+        button.addEventListener("click", () => {
+            const room = rooms.find(item => String(item.id) === button.dataset.roomId);
+            if (!room) return;
+            container.innerHTML = `<button type="button" data-back class="details-button">← All floors</button>
+        <h3 tabindex="-1" data-room-heading style="margin-top:20px">Floor ${room.floor_number} · Study room ${room.room_number}</h3>
+        <p>${escapeHtml(space.name)}</p>
+        <div style="font-size:30px;font-weight:700;margin:20px 0">${room.capacity - room.occupied} <span style="font-size:14px">seats free</span></div>
+        <p>Capacity: ${room.capacity} · Occupied: ${room.occupied}</p>
+        <p>${room.amenities.map(escapeHtml).join(" · ")}</p>
+        <p style="font-size:12px">${room.is_demo ? "SIMULATED data. Every demo room starts with the same values. These are not verified room locations or live reports." : "Room occupancy from the database."}</p>`;
+            container.querySelector("[data-back]").addEventListener("click", () => {
+                renderResidenceFloors(container, space, rooms);
+                container.querySelector(`[data-room-id="${room.id}"]`)?.focus();
+            });
+            container.querySelector("[data-room-heading]").focus();
+        });
+    });
+}
+
+async function openResidenceRooms(space) {
+    const request = residenceRequest;
+    elements.dialogCategory.textContent = "Residence hall";
+    elements.dialogTitle.textContent = space.name;
+    elements.dialogLocation.textContent = space.location;
+    elements.dialogAmenities.textContent = `${space.floor_count || "—"} floors · 2 demo study rooms per floor`;
+    elements.reportForm.hidden = true;
+    const availability = document.querySelector(".dialog-availability");
+    if (availability) { availability.hidden = true; availability.style.display = "none"; }
+    const description = document.querySelector(".dialog-description");
+    if (description) { description.hidden = true; description.style.display = "none"; }
+    elements.dialog.style.width = "600px";
+    const container = document.createElement("div");
+    container.id = "residence-room-browser";
+    container.setAttribute("aria-live", "polite");
+    container.textContent = "Loading study rooms…";
+    elements.reportForm.before(container);
+    if (!elements.dialog.open) elements.dialog.showModal();
+    try {
+        const { data, error } = await client.from("residence_study_rooms")
+            .select("*").eq("building_id", space.id)
+            .order("floor_number").order("room_number");
+        if (request !== residenceRequest || state.selectedSpaceId !== space.id) return;
+        if (error) throw error;
+        if (!data?.length) {
+            container.textContent = "No study rooms found. Run the residence-room SQL migration first.";
+            return;
+        }
+        renderResidenceFloors(container, space, data);
+    } catch (error) {
+        if (request === residenceRequest) container.textContent = `Could not load study rooms: ${error.message || "Please try again."}`;
+    }
+}
+
+/* Filter reset */
+
+function resetFilters() {
+    state.search = "";
+    state.category = "All";
+    state.sort = "recommended";
+    state.view = "all";
+    elements.search.value = "";
+    elements.sort.value = "recommended";
+    elements.categoryButtons.forEach(button => {
+        const active = button.dataset.category === "All";
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+    });
+    elements.viewButtons.forEach(button => {
+        const active = button.dataset.view === "all";
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+    });
+    showPage("all");
+    renderSpaces();
+}
+
+function handleSearchChange() {
+    state.search = elements.search.value;
+    if (!state.search.trim()) {
+        resetFilters();
+        return;
+    }
+    renderSpaces();
 }
 
 /* Map page */
@@ -539,19 +679,10 @@ function setupMapPage() {
     mapPage.innerHTML = `
     <div class="page-heading">
       <h1 id="map-heading" tabindex="-1">Campus map</h1>
-      <p>Find your way to libraries, study rooms, and dining halls.</p>
+      <p>Explore UTK buildings and crowd density.</p>
     </div>
-    <div id="campus-map" aria-label="Campus map"
-      style="min-height:460px;min-height:min(65vh,650px);border:1px solid var(--border,#e1e7df);border-radius:16px;overflow:hidden;background:var(--surface,#fff)">
-      <!-- Replace this placeholder with your map image, embed, or interactive map. -->
-      <div style="min-height:inherit;display:grid;place-items:center;padding:32px;text-align:center;background:linear-gradient(90deg,#e1e7df55 1px,transparent 1px),linear-gradient(#e1e7df55 1px,transparent 1px);background-size:36px 36px">
-        <div style="padding:28px;border-radius:14px;background:var(--surface,#fff);max-width:340px;box-shadow:0 8px 30px #203a3208">
-          <span aria-hidden="true" style="display:block;color:var(--green,#176249);font-size:42px;margin-bottom:14px">⌖</span>
-          <h2>Your campus, mapped out.</h2>
-          <p style="margin-bottom:0">Your campus map will appear here.</p>
-        </div>
-      </div>
-    </div>
+    <iframe id="campus-map" src="map.html" title="UTK campus occupancy map" loading="lazy"
+      style="display:block;width:100%;height:75vh;min-height:450px;border:1px solid #e1e7df;border-radius:16px;background:white"></iframe>
   `;
     main.appendChild(mapPage);
     elements.viewButtons = document.querySelectorAll("[data-view]");
@@ -570,6 +701,32 @@ function showPage(view) {
 }
 
 setupMapPage();
+
+// Include non-library buildings in the category controls.
+const categoryTabs = document.querySelector(".category-tabs");
+if (categoryTabs && !categoryTabs.querySelector('[data-category="Campus building"]')) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "category-button";
+    button.dataset.category = "Campus building";
+    button.setAttribute("aria-pressed", "false");
+    button.textContent = "Other buildings";
+    categoryTabs.appendChild(button);
+    categoryTabs.style.flexWrap = "wrap";
+    elements.categoryButtons = document.querySelectorAll("[data-category]");
+}
+
+// Residence halls are identified by database metadata, not by a name match.
+if (categoryTabs && !categoryTabs.querySelector('[data-category="Residence halls"]')) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "category-button";
+    button.dataset.category = "Residence halls";
+    button.setAttribute("aria-pressed", "false");
+    button.textContent = "Residence halls";
+    categoryTabs.appendChild(button);
+    elements.categoryButtons = document.querySelectorAll("[data-category]");
+}
 
 /* Events */
 
@@ -604,10 +761,27 @@ elements.viewButtons.forEach(button => {
     });
 });
 
-elements.search.addEventListener("input", event => {
-    state.search = event.target.value;
-    renderSpaces();
+elements.search.addEventListener("input", handleSearchChange);
+// Some browsers fire a separate event for the built-in search clear button.
+elements.search.addEventListener("search", handleSearchChange);
+elements.search.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+        event.preventDefault();
+        resetFilters();
+    }
 });
+
+const toolbar = document.querySelector(".toolbar");
+if (toolbar && !document.getElementById("clear-filters")) {
+    const clearButton = document.createElement("button");
+    clearButton.id = "clear-filters";
+    clearButton.type = "button";
+    clearButton.textContent = "Clear filters";
+    clearButton.style.cssText = "padding:10px 12px;border:1px solid var(--border,#e1e7df);border-radius:8px;background:var(--surface,#fff);color:var(--green,#176249);white-space:nowrap";
+    clearButton.addEventListener("click", resetFilters);
+    toolbar.appendChild(clearButton);
+    toolbar.style.flexWrap = "wrap";
+}
 
 elements.sort.addEventListener("change", event => {
     state.sort = event.target.value;
@@ -646,6 +820,7 @@ elements.closeDialog.addEventListener("click", () => {
 
 elements.dialog.addEventListener("close", () => {
     state.selectedSpaceId = null;
+    resetResidenceDetails();
 });
 
 elements.occupancyInput.addEventListener("input", () => {
@@ -663,7 +838,7 @@ async function loadSpaces() {
     fetching = true;
     try {
         if (!client) throw new Error("Supabase client is missing. Check your script order.");
-        const { data, error } = await client.from("space_status").select("*").order("id");
+        const { data, error } = await client.from("space_status").select("*").order("name").range(0, 999);
         if (error) throw error;
         spaces = data || [];
         loadError = "";
@@ -682,6 +857,7 @@ async function loadSpaces() {
         const detailFocus = elements.grid.contains(active)
             ? active?.dataset?.detail : null;
         render();
+        updatePageLabels();
         if (savedFocus) elements.grid.querySelector(`[data-save="${savedFocus}"]`)?.focus();
         if (detailFocus) elements.grid.querySelector(`[data-detail="${detailFocus}"]`)?.focus();
         if (loadError) elements.recommendation.textContent = loadError;
@@ -692,7 +868,7 @@ async function loadSpaces() {
 
 function updatePageLabels() {
     document.querySelectorAll(".demo-badge").forEach(badge => {
-        if (badge.id !== "dialog-category") badge.textContent = "Shared occupancy";
+        if (badge.id !== "dialog-category") badge.textContent = spaces.some(space => space.occupancy_source === "demo" || space.capacity_is_estimated) ? "Includes demo data" : "Shared occupancy";
     });
     const campusLabel = document.querySelector(".campus-label span");
     if (campusLabel) campusLabel.textContent = "Campus occupancy";
