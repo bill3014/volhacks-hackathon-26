@@ -76,6 +76,7 @@ p {
     padding: 35px 24px;
     background: var(--surface);
     border-right: 1px solid var(--border);
+    background-color: #F58220;
 }
 
 .brand {
