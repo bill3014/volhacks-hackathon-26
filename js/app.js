@@ -1,762 +1,764 @@
-"use strict";
+const UTK_CENTER = [-83.9295, 35.9544];
+const UTK_BBOX = "35.9435,-83.9470,35.9590,-83.9210";
+const CACHE_KEY = "utk_campus_3d_fast_v2";
 
-/*
- * Sample campus data.
- * Change these records to match your campus.
- */
-const INITIAL_SPACES = [
-    {
-        id: 1,
-        name: "Central Library",
-        category: "Library",
-        location: "Main campus · 3 floors",
-        capacity: 240,
-        occupied: 142,
-        amenities: ["Quiet zones", "Wi-Fi", "Outlets"],
-        background: "#e4e8dc",
-        artwork: "library"
-    },
-    {
-        id: 2,
-        name: "Study Room 204",
-        category: "Study room",
-        location: "Learning Commons · Floor 2",
-        capacity: 8,
-        occupied: 2,
-        amenities: ["Whiteboard", "Group study", "Outlets"],
-        background: "#e9e2d6",
-        artwork: "room"
-    },
-    {
-        id: 3,
-        name: "The Commons",
-        category: "Dining hall",
-        location: "Student Center · Ground floor",
-        capacity: 180,
-        occupied: 153,
-        amenities: ["Hot meals", "Coffee", "Social"],
-        background: "#e9dfd5",
-        artwork: "dining"
-    },
-    {
-        id: 4,
-        name: "North Library",
-        category: "Library",
-        location: "North campus · 2 floors",
-        capacity: 120,
-        occupied: 29,
-        amenities: ["Silent study", "Wi-Fi", "Natural light"],
-        background: "#dde6df",
-        artwork: "library"
-    },
-    {
-        id: 5,
-        name: "Study Room 108",
-        category: "Study room",
-        location: "Science Building · Floor 1",
-        capacity: 6,
-        occupied: 6,
-        amenities: ["Whiteboard", "Display", "Group study"],
-        background: "#dfe5e8",
-        artwork: "room"
-    },
-    {
-        id: 6,
-        name: "Garden Dining",
-        category: "Dining hall",
-        location: "West campus · Garden level",
-        capacity: 100,
-        occupied: 34,
-        amenities: ["Outdoor seats", "Plant-based", "Coffee"],
-        background: "#e7e8d7",
-        artwork: "dining"
-    }
+// Official UTK Campus boundaries (Main Campus, The Hill, West Campus, Athletics & Ag Campus)
+const UTK_CAMPUS_ZONES = [
+  {
+    type: "Polygon",
+    coordinates: [[
+      [-83.9398, 35.9558],
+      [-83.9315, 35.9574],
+      [-83.9278, 35.9587],
+      [-83.9238, 35.9587],
+      [-83.9216, 35.9558],
+      [-83.9213, 35.9482],
+      [-83.9255, 35.9448],
+      [-83.9348, 35.9443],
+      [-83.9398, 35.9495],
+      [-83.9398, 35.9558]
+    ]]
+  },
+  {
+    type: "Polygon",
+    coordinates: [[
+      [-83.9470, 35.9508],
+      [-83.9395, 35.9508],
+      [-83.9395, 35.9438],
+      [-83.9470, 35.9438],
+      [-83.9470, 35.9508]
+    ]]
+  }
 ];
 
-const STORAGE_KEYS = {
-    favorites: "campus-space:favorites",
-    reports: "campus-space:reports"
+const EXCLUDED_TYPES = new Set([
+  "house", "detached", "semidetached_house", "terrace", "bungalow", "static_caravan"
+]);
+
+const BUILDING_HEIGHT_OVERRIDES = {
+  "McClung Tower": 52,
+  "Ayres Hall": 42,
+  "John C. Hodges Library": 34,
+  "Neyland Stadium": 46,
+  "Thompson-Boling Arena": 38,
+  "Student Union": 26,
+  "Haslam Business Building": 28,
+  "James A. Haslam II Business Building": 28,
+  "J.D. Tickle Engineering Building": 26,
+  "Hess Hall": 30,
+  "Stokely Hall": 32
 };
 
-/* Storage helpers */
-
-function readStorage(key, fallback) {
-    try {
-        const value = localStorage.getItem(key);
-
-        return value === null ? fallback : JSON.parse(value);
-    } catch {
-        return fallback;
+// Built-in core UTK campus buildings so the 3D map renders in 0ms with zero network wait
+const INSTANT_UTK_GEOJSON = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      id: "utk/hodges",
+      properties: { name: "John C. Hodges Library", height: "34" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9299, 35.9554], [-83.9288, 35.9554],
+          [-83.9288, 35.9546], [-83.9299, 35.9546], [-83.9299, 35.9554]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/student-union",
+      properties: { name: "Student Union", height: "26" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9287, 35.9570], [-83.9272, 35.9570],
+          [-83.9272, 35.9560], [-83.9287, 35.9560], [-83.9287, 35.9570]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/ayres",
+      properties: { name: "Ayres Hall", height: "42" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9265, 35.9577], [-83.9256, 35.9577],
+          [-83.9256, 35.9571], [-83.9265, 35.9571], [-83.9265, 35.9577]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/haslam",
+      properties: { name: "James A. Haslam II Business Building", height: "28" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9306, 35.9567], [-83.9296, 35.9567],
+          [-83.9296, 35.9559], [-83.9306, 35.9559], [-83.9306, 35.9567]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/tickle",
+      properties: { name: "J.D. Tickle Engineering Building", height: "26" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9247, 35.9563], [-83.9238, 35.9563],
+          [-83.9238, 35.9556], [-83.9247, 35.9556], [-83.9247, 35.9563]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/mcclung",
+      properties: { name: "McClung Tower", height: "52" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9295, 35.9565], [-83.9289, 35.9565],
+          [-83.9289, 35.9560], [-83.9295, 35.9560], [-83.9295, 35.9565]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/hess",
+      properties: { name: "Hess Hall", height: "30" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9325, 35.9547], [-83.9313, 35.9547],
+          [-83.9313, 35.9538], [-83.9325, 35.9538], [-83.9325, 35.9547]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/stokely",
+      properties: { name: "Stokely Hall", height: "32" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9347, 35.9558], [-83.9334, 35.9558],
+          [-83.9334, 35.9549], [-83.9347, 35.9549], [-83.9347, 35.9558]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/trecs",
+      properties: { name: "Tennessee Recreation Center for Students", height: "22" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9372, 35.9522], [-83.9356, 35.9522],
+          [-83.9356, 35.9510], [-83.9372, 35.9510], [-83.9372, 35.9522]
+        ]]
+      }
+    },
+    {
+      type: "Feature",
+      id: "utk/neyland",
+      properties: { name: "Neyland Stadium", height: "46" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [-83.9262, 35.9560], [-83.9238, 35.9560],
+          [-83.9238, 35.9538], [-83.9262, 35.9538], [-83.9262, 35.9560]
+        ]]
+      }
     }
-}
+  ]
+};
 
-function writeStorage(key, value) {
-    try {
-        localStorage.setItem(key, JSON.stringify(value));
-        return true;
-    } catch {
-        return false;
-    }
-}
+let occupancyData = {};
+let campusGeoJson = null;
+let autoTimer = null;
+let is3DView = true;
 
-const storedFavorites = readStorage(STORAGE_KEYS.favorites, []);
-
-const favorites = new Set(
-    Array.isArray(storedFavorites)
-        ? storedFavorites.filter(
-            id => INITIAL_SPACES.some(space => space.id === id)
-        )
-        : []
-);
-
-const storedReports = readStorage(STORAGE_KEYS.reports, {});
-
-const reports =
-    storedReports &&
-    typeof storedReports === "object" &&
-    !Array.isArray(storedReports)
-        ? storedReports
-        : {};
-
-const spaces = INITIAL_SPACES.map(space => {
-    const report = reports[space.id];
-
-    const validReport =
-        report &&
-        Number.isInteger(report.occupied) &&
-        report.occupied >= 0 &&
-        report.occupied <= space.capacity;
-
-    return {
-        ...space,
-        occupied: validReport ? report.occupied : space.occupied,
-        reportedAt: validReport ? report.updatedAt : null
-    };
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://tiles.openfreemap.org/styles/positron",
+  center: UTK_CENTER,
+  zoom: 16.0,
+  pitch: 64,
+  bearing: -26,
+  maxPitch: 85,
+  antialias: true
 });
 
-/* Application state */
+map.addControl(
+  new maplibregl.NavigationControl({ visualizePitch: true }),
+  "top-right"
+);
 
-const state = {
-    category: "All",
-    view: "all",
-    search: "",
-    sort: "recommended",
-    selectedSpaceId: null
-};
-
-/* DOM references */
-
-const elements = {
-    availableSeats: document.getElementById("available-seats"),
-    spaceCount: document.getElementById("space-count"),
-    campusOccupancy: document.getElementById("campus-occupancy"),
-
-    search: document.getElementById("search-input"),
-    sort: document.getElementById("sort-select"),
-
-    resultsHeading: document.getElementById("results-heading"),
-    resultsCount: document.getElementById("results-count"),
-    grid: document.getElementById("spaces-grid"),
-    recommendation: document.getElementById("recommendation"),
-
-    categoryButtons: document.querySelectorAll("[data-category]"),
-    viewButtons: document.querySelectorAll("[data-view]"),
-
-    dialog: document.getElementById("space-dialog"),
-    dialogCategory: document.getElementById("dialog-category"),
-    dialogTitle: document.getElementById("dialog-title"),
-    dialogLocation: document.getElementById("dialog-location"),
-    dialogAmenities: document.getElementById("dialog-amenities"),
-    dialogAvailable: document.getElementById("dialog-available"),
-
-    closeDialog: document.getElementById("close-dialog"),
-    reportForm: document.getElementById("occupancy-form"),
-    occupancyInput: document.getElementById("occupancy-input"),
-    reportFeedback: document.getElementById("report-feedback")
-};
-
-/* Data helpers */
-
-function getAvailableSeats(space) {
-    return space.capacity - space.occupied;
+function getOuterRing(geometry) {
+  if (!geometry || !geometry.coordinates) return null;
+  return geometry.type === "Polygon"
+    ? geometry.coordinates[0]
+    : geometry.coordinates[0][0];
 }
 
-function getOccupancyPercentage(space) {
-    if (space.capacity <= 0) {
-        return 0;
-    }
-
-    return Math.round((space.occupied / space.capacity) * 100);
+function getPolygonCenter(geometry) {
+  const ring = getOuterRing(geometry);
+  if (!ring || ring.length === 0) return UTK_CENTER;
+  let lngSum = 0;
+  let latSum = 0;
+  ring.forEach(([lng, lat]) => {
+    lngSum += lng;
+    latSum += lat;
+  });
+  return [lngSum / ring.length, latSum / ring.length];
 }
 
-function getOccupancyStatus(space) {
-    const percentage = getOccupancyPercentage(space);
-
-    if (space.occupied >= space.capacity) {
-        return { className: "busy", label: "Full" };
-    }
-
-    if (percentage >= 80) {
-        return { className: "busy", label: "Busy" };
-    }
-
-    if (percentage >= 50) {
-        return { className: "moderate", label: "Filling up" };
-    }
-
-    return { className: "available", label: "Available" };
+function getRingAreaApprox(ring) {
+  if (!ring || ring.length < 3) return 0;
+  let area = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    area += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+  }
+  return Math.abs(area / 2);
 }
 
-/*
- * Escape text before inserting it into an HTML template.
- * This also makes future API-supplied names safer to render.
- */
-function escapeHtml(value) {
-    const replacements = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-    };
+function isPointInRing(point, ring) {
+  if (!ring || ring.length < 3) return false;
+  const [x, y] = point;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersect =
+      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
 
-    return String(value).replace(
-        /[&<>"']/g,
-        character => replacements[character]
+function isOnUtkCampus(feature) {
+  const props = feature.properties || {};
+  const bType = String(props.building || "").toLowerCase();
+  const leisure = String(props.leisure || "").toLowerCase();
+  const name = String(props.name || "").toLowerCase();
+  const op = String(props.operator || "").toLowerCase();
+
+  const isStadium = leisure === "stadium" || name.includes("neyland");
+  const taggedUtk =
+    isStadium ||
+    bType === "university" ||
+    bType === "dormitory" ||
+    bType === "college" ||
+    op.includes("university of tennessee") ||
+    op.includes("utk");
+
+  if (EXCLUDED_TYPES.has(bType) && !taggedUtk) return false;
+
+  const center = getPolygonCenter(feature.geometry);
+  return (
+    taggedUtk ||
+    UTK_CAMPUS_ZONES.some((zone) => isPointInRing(center, zone.coordinates[0]))
+  );
+}
+
+function getSeverityClass(pct) {
+  if (pct < 45) return "low";
+  if (pct <= 75) return "mid";
+  return "high";
+}
+
+function parseHeightMeters(props, fallback) {
+  if (props.height) {
+    const parsed = parseFloat(String(props.height).replace(/[^\d.-]/g, ""));
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  if (props["building:levels"]) {
+    const levels = parseFloat(String(props["building:levels"]).replace(/[^\d.-]/g, ""));
+    if (!Number.isNaN(levels) && levels > 0) return levels * 5;
+  }
+  return fallback;
+}
+
+function enrichGeoJson(geojson) {
+  const campusFeatures = (geojson.features || []).filter(
+    (f) =>
+      f.geometry &&
+      (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon") &&
+      isOnUtkCampus(f)
+  );
+
+  // Keep Neyland Stadium visible even if the loaded GeoJSON only contains building=* ways
+  const hasNeyland = campusFeatures.some((f) =>
+    /neyland/i.test((f.properties && f.properties.name) || "")
+  );
+  if (!hasNeyland) {
+    const fallbackNeyland = INSTANT_UTK_GEOJSON.features.find(
+      (f) => f.id === "utk/neyland"
     );
+    if (fallbackNeyland) {
+      campusFeatures.push(JSON.parse(JSON.stringify(fallbackNeyland)));
+    }
+  }
+
+  // Deduplicate overlapping polygons at the same coordinates to prevent Z-fighting
+  const deduped = [];
+  const seenByName = new Map();
+
+  campusFeatures.forEach((feature) => {
+    const props = feature.properties || {};
+    const name = props.name || "";
+    const area = getRingAreaApprox(getOuterRing(feature.geometry));
+
+    if (name && seenByName.has(name)) {
+      const idx = seenByName.get(name);
+      const c1 = getPolygonCenter(deduped[idx].geometry);
+      const c2 = getPolygonCenter(feature.geometry);
+      if (Math.hypot(c1[0] - c2[0], c1[1] - c2[1]) < 0.0002) {
+        if (area > deduped[idx]._area) {
+          feature._area = area;
+          deduped[idx] = feature;
+        }
+        return;
+      }
+    }
+
+    feature._area = area;
+    if (name) seenByName.set(name, deduped.length);
+    deduped.push(feature);
+  });
+
+  const fallbackOcc = {};
+
+  deduped.forEach((feature, index) => {
+    const props = feature.properties || {};
+    const name = props.name || "UTK Campus Building";
+
+    let renderHeight = BUILDING_HEIGHT_OVERRIDES[name]
+      ? BUILDING_HEIGHT_OVERRIDES[name]
+      : parseHeightMeters(props, 18);
+    if (renderHeight < 15) renderHeight = 15;
+
+    const tracked = occupancyData[name];
+    if (!tracked && fallbackOcc[name] === undefined) {
+      fallbackOcc[name] = Math.floor(20 + Math.random() * 50);
+    }
+
+    const occupancy = tracked ? tracked.occupancy : fallbackOcc[name];
+    const capacity = tracked ? tracked.capacity : 300;
+
+    feature.id = feature.id || `utk-bldg-${index}`;
+    feature.properties.featureId = String(feature.id);
+    feature.properties.displayName = name;
+    feature.properties.renderHeight = renderHeight;
+    feature.properties.occupancy = occupancy;
+    feature.properties.capacity = capacity;
+    feature.properties.headcount = Math.round((occupancy / 100) * capacity);
+  });
+
+  return { type: "FeatureCollection", features: deduped };
 }
 
-function getReportLabel(space) {
-    if (!space.reportedAt) {
-        return "Sample occupancy";
-    }
+function renderSidebarList(filterText = "") {
+  if (!campusGeoJson) return;
+  const listEl = document.getElementById("buildingList");
+  const query = filterText.trim().toLowerCase();
 
-    const timestamp = Date.parse(space.reportedAt);
+  const byName = new Map();
+  campusGeoJson.features.forEach((f) => {
+    const name = f.properties.name;
+    if (!name || !name.toLowerCase().includes(query)) return;
+    if (!byName.has(name)) byName.set(name, f);
+  });
 
-    if (!Number.isFinite(timestamp)) {
-        return "Your report · this device";
-    }
+  const sorted = Array.from(byName.values()).sort(
+    (a, b) => b.properties.occupancy - a.properties.occupancy
+  );
 
-    const minutes = Math.max(
-        0,
-        Math.floor((Date.now() - timestamp) / 60000)
-    );
-
-    if (minutes < 1) {
-        return "Your report · just now";
-    }
-
-    if (minutes < 60) {
-        return `Your report · ${minutes}m ago`;
-    }
-
-    const hours = Math.floor(minutes / 60);
-
-    if (hours < 24) {
-        return `Your report · ${hours}h ago`;
-    }
-
-    return "Your report · " + new Date(timestamp).toLocaleDateString();
-}
-
-/* Decorative SVG illustrations */
-
-function getArtwork(type) {
-    const illustrations = {
-        library: `
-      <rect
-        x="35" y="28" width="120" height="80"
-        fill="#ffffff88"
-        stroke="#6b7c67"
-        stroke-width="2"
-      />
-
-      <path
-        d="M35 55h120 M35 82h120"
-        stroke="#6b7c67"
-        stroke-width="2"
-      />
-
-      <path
-        d="
-          M44 35v18 M53 35v18 M63 35v18
-          M76 35v18 M87 35v18 M100 35v18
-          M113 35v18 M123 35v18 M139 35v18
-          M44 62v18 M56 62v18 M69 62v18
-          M82 62v18 M94 62v18 M108 62v18
-          M121 62v18 M138 62v18
-          M45 89v16 M58 89v16 M72 89v16
-          M86 89v16 M99 89v16 M114 89v16
-          M128 89v16 M141 89v16
-        "
-        stroke="#85987b"
-        stroke-width="6"
-      />
-    `,
-
-        room: `
-      <rect
-        x="26" y="22" width="138" height="82"
-        fill="#ffffff66"
-        stroke="#a59d87"
-      />
-
-      <rect
-        x="39" y="32" width="70" height="35"
-        fill="#ffffffaa"
-      />
-
-      <path
-        d="M52 49h40"
-        stroke="#a4b5a0"
-        stroke-width="2"
-      />
-
-      <path
-        d="M43 83h106v8H43z M52 91v24 M138 91v24"
-        fill="#a6a58c"
-        stroke="#8a8d76"
-        stroke-width="3"
-      />
-
-      <path
-        d="M72 98v21 M117 98v21"
-        stroke="#718777"
-        stroke-width="12"
-      />
-    `,
-
-        dining: `
-      <path
-        d="M32 70h125v8H32z M42 78v34 M147 78v34"
-        fill="#ae9c81"
-        stroke="#ae9c81"
-        stroke-width="3"
-      />
-
-      <ellipse
-        cx="70" cy="67" rx="15" ry="4"
-        fill="white"
-      />
-
-      <ellipse
-        cx="120" cy="67" rx="15" ry="4"
-        fill="white"
-      />
-
-      <path
-        d="M58 87v29 M128 87v29"
-        stroke="#7d9079"
-        stroke-width="13"
-      />
-
-      <path
-        d="M93 17v18 M75 47h36l-8-13H83z"
-        fill="#73856e"
-        stroke="#73856e"
-      />
-
-      <path
-        d="M171 62v30 M166 110h12l5-28h-22z"
-        fill="#8a9d7a"
-        stroke="#8a9d7a"
-      />
-    `
-    };
-
-    return `
-    <svg viewBox="0 0 190 125" aria-hidden="true">
-      <path d="M13 119h166" stroke="#83927a55" />
-      ${illustrations[type] || illustrations.library}
-    </svg>
-  `;
-}
-
-/* Rendering */
-
-function renderSummary() {
-    const totalCapacity = spaces.reduce(
-        (total, space) => total + space.capacity,
-        0
-    );
-
-    const totalOccupied = spaces.reduce(
-        (total, space) => total + space.occupied,
-        0
-    );
-
-    const available = totalCapacity - totalOccupied;
-
-    const percentage =
-        totalCapacity > 0
-            ? Math.round((totalOccupied / totalCapacity) * 100)
-            : 0;
-
-    elements.availableSeats.textContent = available.toLocaleString();
-    elements.spaceCount.textContent = spaces.length;
-    elements.campusOccupancy.textContent = `${percentage}%`;
-}
-
-function getVisibleSpaces() {
-    const query = state.search.trim().toLowerCase();
-
-    const visibleSpaces = spaces.filter(space => {
-        const matchesCategory =
-            state.category === "All" ||
-            space.category === state.category;
-
-        const matchesView =
-            state.view === "all" ||
-            favorites.has(space.id);
-
-        const searchableText = [
-            space.name,
-            space.location,
-            space.category,
-            ...space.amenities
-        ].join(" ").toLowerCase();
-
-        const matchesSearch = searchableText.includes(query);
-
-        return matchesCategory && matchesView && matchesSearch;
-    });
-
-    if (state.sort === "available") {
-        visibleSpaces.sort(
-            (a, b) => getAvailableSeats(b) - getAvailableSeats(a)
-        );
-    }
-
-    if (state.sort === "quiet") {
-        visibleSpaces.sort(
-            (a, b) =>
-                a.occupied / a.capacity - b.occupied / b.capacity
-        );
-    }
-
-    return visibleSpaces;
-}
-
-function createSpaceCard(space) {
-    const available = getAvailableSeats(space);
-    const percentage = getOccupancyPercentage(space);
-    const status = getOccupancyStatus(space);
-    const isSaved = favorites.has(space.id);
-
-    const name = escapeHtml(space.name);
-
-    return `
-    <article class="space-card">
-      <div
-        class="space-art"
-        style="--art-background: ${space.background}"
-      >
-        ${getArtwork(space.artwork)}
-
-        <span class="space-type">
-          ${escapeHtml(space.category)}
-        </span>
-
-        <button
-          class="favorite-button ${isSaved ? "saved" : ""}"
-          data-save="${space.id}"
-          aria-label="${isSaved ? "Unsave" : "Save"} ${name}"
-          aria-pressed="${isSaved}"
-        >
-          ${isSaved ? "★" : "☆"}
-        </button>
+  listEl.innerHTML = "";
+  sorted.forEach((feature) => {
+    const { displayName, occupancy, headcount, capacity } = feature.properties;
+    const li = document.createElement("li");
+    li.className = "building-item";
+    li.innerHTML = `
+      <div>
+        <div class="building-name">${displayName}</div>
+        <div class="building-meta">~${headcount} / ${capacity} est. people</div>
       </div>
-
-      <div class="card-body">
-        <div class="card-title-row">
-          <h3>${name}</h3>
-
-          <span class="status ${status.className}">
-            ${status.label}
-          </span>
-        </div>
-
-        <p class="space-location">
-          ${escapeHtml(space.location)}
-        </p>
-
-        <div class="occupancy-summary">
-          <span>
-            <strong>${available}</strong>
-            of ${space.capacity} seats free
-          </span>
-
-          <span>${percentage}% occupied</span>
-        </div>
-
-        <div
-          class="occupancy-bar"
-          role="meter"
-          aria-label="${name} occupancy"
-          aria-valuemin="0"
-          aria-valuemax="${space.capacity}"
-          aria-valuenow="${space.occupied}"
-          aria-valuetext="${space.occupied} of ${space.capacity} seats occupied"
-        >
-          <div
-            class="occupancy-fill ${status.className}"
-            style="width: ${percentage}%"
-          ></div>
-        </div>
-
-        <div class="amenities">
-          ${space.amenities.map(amenity => `
-            <span>· ${escapeHtml(amenity)}</span>
-          `).join("")}
-        </div>
-
-        <div class="card-footer">
-          <span>${escapeHtml(getReportLabel(space))}</span>
-
-          <button
-            class="details-button"
-            data-detail="${space.id}"
-          >
-            View space ↗
-          </button>
-        </div>
-      </div>
-    </article>
-  `;
-}
-
-function renderSpaces() {
-    const visibleSpaces = getVisibleSpaces();
-
-    elements.resultsHeading.textContent =
-        state.view === "saved" ? "Saved spaces" : "Around campus";
-
-    elements.resultsCount.textContent =
-        `${visibleSpaces.length} ` +
-        `${visibleSpaces.length === 1 ? "space" : "spaces"}`;
-
-    if (visibleSpaces.length === 0) {
-        elements.grid.innerHTML = `
-      <div class="empty-state">
-        No spaces found. Try another search or category,
-        or save a space using its star button.
-      </div>
+      <span class="pill ${getSeverityClass(occupancy)}">${occupancy}%</span>
     `;
+    li.addEventListener("click", () => {
+      const center = getPolygonCenter(feature.geometry);
+      is3DView = true;
+      map.flyTo({ center, zoom: 17.5, pitch: 66, bearing: -25 });
+      showBuildingPopup(center, feature.properties, feature.id);
+    });
+    listEl.appendChild(li);
+  });
+}
 
-        return;
+function showBuildingPopup(lngLat, props, id) {
+  new maplibregl.Popup()
+    .setLngLat(lngLat)
+    .setHTML(`
+      <strong>${props.displayName}</strong><br/>
+      Crowd Level: <b>${props.occupancy}%</b> (~${props.headcount} people)<br/>
+      3D Height: ${Math.round(props.renderHeight)} m<br/>
+      <small style="color:#6b7280">ID: ${id || "N/A"}</small>
+    `)
+    .addTo(map);
+}
+
+function assembleRings(wayIds, waysMap, nodesMap) {
+  const segments = wayIds
+    .map((id) => waysMap.get(id))
+    .filter((w) => w && Array.isArray(w.nodes) && w.nodes.length >= 2)
+    .map((w) => [...w.nodes]);
+
+  const rings = [];
+  while (segments.length > 0) {
+    let chain = segments.shift();
+    let extended = true;
+    while (extended && chain[0] !== chain[chain.length - 1]) {
+      extended = false;
+      const tail = chain[chain.length - 1];
+      const head = chain[0];
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg[0] === tail) {
+          chain = chain.concat(seg.slice(1));
+          segments.splice(i, 1);
+          extended = true;
+          break;
+        }
+        if (seg[seg.length - 1] === tail) {
+          chain = chain.concat([...seg].reverse().slice(1));
+          segments.splice(i, 1);
+          extended = true;
+          break;
+        }
+        if (seg[seg.length - 1] === head) {
+          chain = seg.slice(0, -1).concat(chain);
+          segments.splice(i, 1);
+          extended = true;
+          break;
+        }
+        if (seg[0] === head) {
+          chain = [...seg].reverse().slice(0, -1).concat(chain);
+          segments.splice(i, 1);
+          extended = true;
+          break;
+        }
+      }
     }
 
-    elements.grid.innerHTML = visibleSpaces
-        .map(createSpaceCard)
-        .join("");
-}
-
-function renderRecommendation() {
-    const leastCrowded = [...spaces].sort(
-        (a, b) =>
-            a.occupied / a.capacity - b.occupied / b.capacity
-    )[0];
-
-    if (!leastCrowded) {
-        elements.recommendation.textContent =
-            "Add campus spaces to see recommendations.";
-
-        return;
+    const coords = chain.map((nid) => nodesMap.get(nid)).filter(Boolean);
+    if (coords.length >= 4) {
+      if (
+        coords[0][0] !== coords[coords.length - 1][0] ||
+        coords[0][1] !== coords[coords.length - 1][1]
+      ) {
+        coords.push(coords[0]);
+      }
+      rings.push(coords);
     }
-
-    elements.recommendation.textContent =
-        `${leastCrowded.name} has the lowest reported occupancy, ` +
-        `with ${getAvailableSeats(leastCrowded)} of ` +
-        `${leastCrowded.capacity} seats free.`;
+  }
+  return rings;
 }
 
-function render() {
-    renderSummary();
-    renderSpaces();
-    renderRecommendation();
-}
+// Fast native OSM JSON -> GeoJSON converter (supports building ways and stadium relations)
+function osmWaysToGeoJson(osmData) {
+  const nodes = new Map();
+  const ways = new Map();
+  const elements = osmData.elements || [];
 
-/* Favorites */
+  elements.forEach((el) => {
+    if (el.type === "node") nodes.set(el.id, [el.lon, el.lat]);
+    if (el.type === "way") ways.set(el.id, el);
+  });
 
-function toggleFavorite(spaceId) {
-    if (favorites.has(spaceId)) {
-        favorites.delete(spaceId);
-    } else {
-        favorites.add(spaceId);
+  const features = [];
+  elements.forEach((el) => {
+    if (el.type === "way" && Array.isArray(el.nodes) && el.tags) {
+      const coords = [];
+      for (let i = 0; i < el.nodes.length; i++) {
+        const pt = nodes.get(el.nodes[i]);
+        if (pt) coords.push(pt);
+      }
+      if (coords.length >= 4) {
+        features.push({
+          type: "Feature",
+          id: `way/${el.id}`,
+          properties: el.tags,
+          geometry: { type: "Polygon", coordinates: [coords] }
+        });
+      }
+    } else if (
+      el.type === "relation" &&
+      el.tags &&
+      el.tags.leisure === "stadium" &&
+      Array.isArray(el.members)
+    ) {
+      const outerIds = el.members
+        .filter((m) => m.type === "way" && m.role === "outer")
+        .map((m) => m.ref);
+      const innerIds = el.members
+        .filter((m) => m.type === "way" && m.role === "inner")
+        .map((m) => m.ref);
+
+      const outerRings = assembleRings(outerIds, ways, nodes);
+      const innerRings = assembleRings(innerIds, ways, nodes);
+
+      if (outerRings.length > 0) {
+        features.push({
+          type: "Feature",
+          id: `relation/${el.id}`,
+          properties: el.tags,
+          geometry: {
+            type: "Polygon",
+            coordinates: [outerRings[0], ...innerRings]
+          }
+        });
+      }
     }
-
-    writeStorage(STORAGE_KEYS.favorites, [...favorites]);
-    renderSpaces();
+  });
+  return { type: "FeatureCollection", features };
 }
 
-/* Space details */
+async function fetchFullUtkFootprintsQuietly() {
+  // Fast lightweight query: campus buildings + stadium ways/relations
+  const query = `[out:json][timeout:6];(way["building"](${UTK_BBOX});way["leisure"="stadium"](${UTK_BBOX});relation["leisure"="stadium"](${UTK_BBOX}););out body;>;out skel qt;`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
 
-function openSpaceDetails(spaceId) {
-    const space = spaces.find(item => item.id === spaceId);
-
-    if (!space) {
-        return;
+  try {
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      body: query,
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const osmJson = await res.json();
+    const geojson = osmWaysToGeoJson(osmJson);
+    if (geojson.features.length > 5) {
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(geojson));
+      } catch (e) {}
+      return geojson;
     }
-
-    state.selectedSpaceId = spaceId;
-
-    elements.dialogCategory.textContent = space.category;
-    elements.dialogTitle.textContent = space.name;
-    elements.dialogLocation.textContent = space.location;
-    elements.dialogAmenities.textContent = space.amenities.join(" · ");
-    elements.dialogAvailable.textContent = getAvailableSeats(space);
-
-    elements.occupancyInput.max = space.capacity;
-    elements.occupancyInput.value = space.occupied;
-    elements.occupancyInput.setCustomValidity("");
-
-    elements.reportFeedback.textContent = "";
-
-    elements.dialog.showModal();
+  } catch (e) {
+    clearTimeout(timer);
+  }
+  return null;
 }
 
-/* Occupancy reporting */
+function getInitialBuildingsSync() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
+    if (cached && Array.isArray(cached.features) && cached.features.length > 5) {
+      return cached;
+    }
+  } catch (e) {}
+  return JSON.parse(JSON.stringify(INSTANT_UTK_GEOJSON));
+}
 
-function submitOccupancyReport(event) {
-    event.preventDefault();
+function hideBaseMapBuildings() {
+  const style = map.getStyle();
+  if (!style || !style.layers) return;
+  style.layers.forEach((layer) => {
+    if (
+      layer["source-layer"] === "building" ||
+      layer.id.toLowerCase().includes("building")
+    ) {
+      map.setLayoutProperty(layer.id, "visibility", "none");
+    }
+  });
+}
 
-    const space = spaces.find(
-        item => item.id === state.selectedSpaceId
+function inject3DControls() {
+  const buttonRow = document.querySelector(".button-row");
+  if (buttonRow && !document.getElementById("tilt3dBtn")) {
+    const tiltBtn = document.createElement("button");
+    tiltBtn.id = "tilt3dBtn";
+    tiltBtn.type = "button";
+    tiltBtn.className = "secondary active";
+    tiltBtn.textContent = "3D: On";
+    tiltBtn.addEventListener("click", () => {
+      is3DView = !is3DView;
+      tiltBtn.textContent = is3DView ? "3D: On" : "3D: Off";
+      tiltBtn.classList.toggle("active", is3DView);
+      map.easeTo({
+        pitch: is3DView ? 64 : 0,
+        bearing: is3DView ? -26 : 0,
+        duration: 500
+      });
+    });
+    buttonRow.appendChild(tiltBtn);
+  }
+}
+
+function updateMapData(rawGeoJson) {
+  campusGeoJson = enrichGeoJson(rawGeoJson);
+  const count = new Set(campusGeoJson.features.map((f) => f.properties.displayName)).size;
+  document.getElementById("statusText").textContent =
+    `Tracking ${count} 3D UTK campus buildings`;
+
+  const src = map.getSource("utk-buildings");
+  if (src) src.setData(campusGeoJson);
+  renderSidebarList(document.getElementById("searchInput").value);
+}
+
+function simulateLiveUpdate() {
+  if (!campusGeoJson) return;
+  Object.keys(occupancyData).forEach((name) => {
+    const delta = Math.floor(Math.random() * 21) - 10;
+    occupancyData[name].occupancy = Math.min(
+      99,
+      Math.max(8, occupancyData[name].occupancy + delta)
     );
-
-    if (!space) {
-        return;
-    }
-
-    const rawValue = elements.occupancyInput.value.trim();
-    const occupied = Number(rawValue);
-
-    const valid =
-        rawValue !== "" &&
-        Number.isInteger(occupied) &&
-        occupied >= 0 &&
-        occupied <= space.capacity;
-
-    if (!valid) {
-        elements.occupancyInput.setCustomValidity(
-            `Enter a whole number between 0 and ${space.capacity}.`
-        );
-
-        elements.occupancyInput.reportValidity();
-        return;
-    }
-
-    elements.occupancyInput.setCustomValidity("");
-
-    const updatedAt = new Date().toISOString();
-
-    space.occupied = occupied;
-    space.reportedAt = updatedAt;
-
-    reports[space.id] = {
-        occupied,
-        updatedAt
-    };
-
-    const saved = writeStorage(STORAGE_KEYS.reports, reports);
-
-    elements.dialogAvailable.textContent = getAvailableSeats(space);
-
-    elements.reportFeedback.textContent = saved
-        ? "Updated and saved on this device."
-        : "Updated for this session. Browser storage is unavailable.";
-
-    render();
+  });
+  updateMapData(campusGeoJson);
 }
 
-/* Events */
+// Load local occupancy.json immediately
+const occupancyPromise = fetch("./data/occupancy.json")
+  .then((r) => (r.ok ? r.json() : { buildings: {} }))
+  .then((j) => j.buildings || {})
+  .catch(() => ({}));
 
-elements.categoryButtons.forEach(button => {
-    button.addEventListener("click", () => {
-        state.category = button.dataset.category;
+map.on("load", async () => {
+  inject3DControls();
+  hideBaseMapBuildings();
 
-        elements.categoryButtons.forEach(item => {
-            const active = item === button;
+  // Low uniform light keeps building faces solid, bright, and free of shadow flicker
+  map.setLight({
+    anchor: "viewport",
+    color: "#ffffff",
+    intensity: 0.15,
+    position: [1.2, 200, 45]
+  });
 
-            item.classList.toggle("active", active);
-            item.setAttribute("aria-pressed", String(active));
-        });
+  occupancyData = await occupancyPromise;
 
-        renderSpaces();
+  // 1. Render immediately in 0ms using cached or built-in UTK footprints (never stalls!)
+  campusGeoJson = enrichGeoJson(getInitialBuildingsSync());
+
+  const initialCount = new Set(
+    campusGeoJson.features.map((f) => f.properties.displayName)
+  ).size;
+  document.getElementById("statusText").textContent =
+    `Tracking ${initialCount} 3D UTK campus buildings`;
+
+  map.addSource("utk-buildings", {
+    type: "geojson",
+    data: campusGeoJson
+  });
+
+  const layers = map.getStyle().layers || [];
+  const firstSymbolLayer = layers.find((l) => l.type === "symbol");
+  const beforeId = firstSymbolLayer ? firstSymbolLayer.id : undefined;
+
+  // 2. UTK Orange (#FF8200) perimeter border around every UTK campus building
+  map.addLayer(
+    {
+      id: "utk-building-borders",
+      type: "line",
+      source: "utk-buildings",
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "#FF8200",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2, 16, 3.5, 18, 5],
+        "line-opacity": 1
+      }
+    },
+    beforeId
+  );
+
+  // 3. Hover border highlight in UTK Orange
+  map.addLayer(
+    {
+      id: "utk-building-hover-border",
+      type: "line",
+      source: "utk-buildings",
+      filter: ["==", ["get", "featureId"], ""],
+      paint: {
+        "line-color": "#FF8200",
+        "line-width": 6,
+        "line-opacity": 1
+      }
+    },
+    beforeId
+  );
+
+  // 4. Solid, opaque 3D extrusions strictly on UTK campus (zero Z-fighting)
+  map.addLayer(
+    {
+      id: "utk-3d-extrusion",
+      type: "fill-extrusion",
+      source: "utk-buildings",
+      paint: {
+        "fill-extrusion-height": ["get", "renderHeight"],
+        "fill-extrusion-base": 0.25,
+        "fill-extrusion-vertical-gradient": false,
+        "fill-extrusion-opacity": 1,
+        "fill-extrusion-color": [
+          "step",
+          ["get", "occupancy"],
+          "#2ecc71",
+          45, "#f1c40f",
+          76, "#e74c3c"
+        ]
+      }
+    },
+    beforeId
+  );
+
+  renderSidebarList();
+
+  // 5. Silently expand to all ~150+ UTK campus buildings in the background
+  fetch("./data/utk-buildings.geojson")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((localFile) => localFile || fetchFullUtkFootprintsQuietly())
+    .then((fullGeoJson) => {
+      if (fullGeoJson) updateMapData(fullGeoJson);
     });
+
+  map.on("click", "utk-3d-extrusion", (e) => {
+    const feature = e.features[0];
+    showBuildingPopup(e.lngLat, feature.properties, feature.id);
+  });
+
+  map.on("mousemove", "utk-3d-extrusion", (e) => {
+    map.getCanvas().style.cursor = "pointer";
+    const hoveredId = e.features[0]?.properties?.featureId || "";
+    map.setFilter("utk-building-hover-border", ["==", ["get", "featureId"], hoveredId]);
+  });
+
+  map.on("mouseleave", "utk-3d-extrusion", () => {
+    map.getCanvas().style.cursor = "";
+    map.setFilter("utk-building-hover-border", ["==", ["get", "featureId"], ""]);
+  });
 });
 
-elements.viewButtons.forEach(button => {
-    button.addEventListener("click", () => {
-        state.view = button.dataset.view;
-
-        elements.viewButtons.forEach(item => {
-            const active = item === button;
-
-            item.classList.toggle("active", active);
-            item.setAttribute("aria-pressed", String(active));
-        });
-
-        renderSpaces();
-    });
+document.getElementById("searchInput").addEventListener("input", (e) => {
+  renderSidebarList(e.target.value);
 });
 
-elements.search.addEventListener("input", event => {
-    state.search = event.target.value;
-    renderSpaces();
+document.getElementById("simulateBtn").addEventListener("click", simulateLiveUpdate);
+
+document.getElementById("autoToggle").addEventListener("click", (e) => {
+  const btn = e.target;
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+    btn.textContent = "Auto: Off";
+    btn.classList.remove("active");
+  } else {
+    autoTimer = setInterval(simulateLiveUpdate, 3000);
+    btn.textContent = "Auto: On (3s)";
+    btn.classList.add("active");
+  }
 });
-
-elements.sort.addEventListener("change", event => {
-    state.sort = event.target.value;
-    renderSpaces();
-});
-
-elements.grid.addEventListener("click", event => {
-    const saveButton = event.target.closest("[data-save]");
-
-    if (saveButton) {
-        const spaceId = Number(saveButton.dataset.save);
-        toggleFavorite(spaceId);
-
-        // Restore focus after replacing the card HTML.
-        elements.grid
-            .querySelector(`[data-save="${spaceId}"]`)
-            ?.focus();
-
-        return;
-    }
-
-    const detailButton = event.target.closest("[data-detail]");
-
-    if (detailButton) {
-        openSpaceDetails(Number(detailButton.dataset.detail));
-    }
-});
-
-elements.closeDialog.addEventListener("click", () => {
-    elements.dialog.close();
-});
-
-elements.dialog.addEventListener("close", () => {
-    state.selectedSpaceId = null;
-});
-
-elements.occupancyInput.addEventListener("input", () => {
-    elements.occupancyInput.setCustomValidity("");
-});
-
-elements.reportForm.addEventListener(
-    "submit",
-    submitOccupancyReport
-);
-
-// Refresh relative report times while the page is open.
-setInterval(() => {
-    if (!elements.dialog.open) {
-        renderSpaces();
-    }
-}, 60000);
-
-/* Start the app */
-
-render();
