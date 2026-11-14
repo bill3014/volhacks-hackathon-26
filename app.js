@@ -1,4 +1,4 @@
-const UTK_CENTER = [-83.9295, 35.9544];
+﻿const UTK_CENTER = [-83.9295, 35.9544];
 const UTK_BBOX = "35.9435,-83.9470,35.9590,-83.9210";
 const CACHE_KEY = "utk_campus_3d_fast_v2";
 
@@ -624,7 +624,7 @@ function simulateLiveUpdate() {
 }
 
 // Load local occupancy.json immediately
-const occupancyPromise = fetch("./data/occupancy.json")
+const occupancyPromise = (window.LOCAL_OCCUPANCY_DATA ? Promise.resolve({ ok: true, json: () => Promise.resolve(window.LOCAL_OCCUPANCY_DATA) }) : fetch("./data/occupancy.json"))
   .then((r) => (r.ok ? r.json() : { buildings: {} }))
   .then((j) => j.buildings || {})
   .catch(() => ({}));
@@ -719,7 +719,7 @@ map.on("load", async () => {
   renderSidebarList();
 
 // 5. Silently expand to all ~150+ UTK campus buildings in the background
-  fetch("./data/utk-buildings.geojson")
+  (window.LOCAL_UTK_BUILDINGS ? Promise.resolve({ ok: true, json: () => Promise.resolve(window.LOCAL_UTK_BUILDINGS) }) : fetch("./data/utk-buildings.geojson"))
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null)
     .catch(() => null)

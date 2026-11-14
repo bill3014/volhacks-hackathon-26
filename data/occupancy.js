@@ -1,0 +1,17 @@
+﻿window.LOCAL_OCCUPANCY_DATA = {
+  "updatedAt": "2026-11-13T18:30:00Z",
+  "buildings": {
+    "John C. Hodges Library": { "occupancy": 86, "capacity": 1800 },
+    "Student Union": { "occupancy": 91, "capacity": 2200 },
+    "James A. Haslam II Business Building": { "occupancy": 72, "capacity": 950 },
+    "J.D. Tickle Engineering Building": { "occupancy": 64, "capacity": 700 },
+    "Ayres Hall": { "occupancy": 38, "capacity": 450 },
+    "McClung Tower": { "occupancy": 31, "capacity": 400 },
+    "Stokely Hall": { "occupancy": 78, "capacity": 850 },
+    "Hess Hall": { "occupancy": 83, "capacity": 1050 },
+    "Tennessee Recreation Center for Students": { "occupancy": 76, "capacity": 1200 },
+    "11th Street Parking Garage": { "occupancy": 89, "capacity": 1100 },
+    "Terrace Avenue Parking Garage (G17)": { "occupancy": 52, "capacity": 800 },
+    "Neyland Stadium": {"occupancy": 82, "capacity": 101915 }
+  }
+};
