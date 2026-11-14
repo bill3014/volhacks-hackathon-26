@@ -789,3 +789,13 @@ dialog::backdrop {
         transition: none;
     }
 }
+
+/* Logo text */
+.sidebar .brand {
+    color: #fff;
+}
+
+/* Unselected sidebar items */
+.sidebar .nav-button:not(.active) {
+    color: #fff;
+}
