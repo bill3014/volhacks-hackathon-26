@@ -1,17 +1,44 @@
 const UTK_CENTER = [-83.9295, 35.9544];
 const UTK_BBOX = "35.9400,-83.9520,35.9650,-83.9150";
 
+// GeoJSON polygon matching UTK_BBOX used to clip out duplicate base-map buildings
+const UTK_CLIP_POLYGON = {
+  type: "Polygon",
+  coordinates: [[
+    [-83.9520, 35.9400],
+    [-83.9150, 35.9400],
+    [-83.9150, 35.9650],
+    [-83.9520, 35.9650],
+    [-83.9520, 35.9400]
+  ]]
+};
+
 let occupancyData = {};
 let campusGeoJson = null;
 let autoTimer = null;
+let is3DView = true;
+
+const BUILDING_HEIGHT_OVERRIDES = {
+  "McClung Tower": 52,
+  "Ayres Hall": 42,
+  "John C. Hodges Library": 34,
+  "Neyland Stadium": 46,
+  "Thompson-Boling Arena": 38,
+  "Student Union": 26,
+  "Haslam Business Building": 28,
+  "James A. Haslam II Business Building": 28,
+  "J.D. Tickle Engineering Building": 26,
+  "Hess Hall": 30,
+  "Stokely Hall": 32
+};
 
 const FALLBACK_GEOJSON = {
   type: "FeatureCollection",
   features: [
     {
       type: "Feature",
-      id: "fallback/hodges-base",
-      properties: { name: "John C. Hodges Library", "building:levels": "6" },
+      id: "fallback/hodges",
+      properties: { name: "John C. Hodges Library", height: "34" },
       geometry: {
         type: "Polygon",
         coordinates: [[
@@ -22,25 +49,8 @@ const FALLBACK_GEOJSON = {
     },
     {
       type: "Feature",
-      id: "fallback/hodges-tower",
-      properties: {
-        name: "John C. Hodges Library",
-        "building:part": "yes",
-        height: "34",
-        min_height: "24"
-      },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[
-          [-83.9296, 35.9552], [-83.9291, 35.9552],
-          [-83.9291, 35.9548], [-83.9296, 35.9548], [-83.9296, 35.9552]
-        ]]
-      }
-    },
-    {
-      type: "Feature",
       id: "fallback/student-union",
-      properties: { name: "Student Union", "building:levels": "4" },
+      properties: { name: "Student Union", height: "26" },
       geometry: {
         type: "Polygon",
         coordinates: [[
@@ -51,30 +61,13 @@ const FALLBACK_GEOJSON = {
     },
     {
       type: "Feature",
-      id: "fallback/ayres-main",
-      properties: { name: "Ayres Hall", "building:levels": "3" },
+      id: "fallback/ayres",
+      properties: { name: "Ayres Hall", height: "42" },
       geometry: {
         type: "Polygon",
         coordinates: [[
           [-83.9265, 35.9577], [-83.9256, 35.9577],
           [-83.9256, 35.9571], [-83.9265, 35.9571], [-83.9265, 35.9577]
-        ]]
-      }
-    },
-    {
-      type: "Feature",
-      id: "fallback/ayres-tower",
-      properties: {
-        name: "Ayres Hall",
-        "building:part": "yes",
-        height: "38",
-        min_height: "12"
-      },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[
-          [-83.9262, 35.9575], [-83.9259, 35.9575],
-          [-83.9259, 35.9573], [-83.9262, 35.9573], [-83.9262, 35.9575]
         ]]
       }
     }
@@ -83,11 +76,11 @@ const FALLBACK_GEOJSON = {
 
 const map = new maplibregl.Map({
   container: "map",
-  style: "https://tiles.openfreemap.org/styles/positron",
+  style: "https://tiles.openfreemap.org/styles/liberty",
   center: UTK_CENTER,
-  zoom: 16.1,
-  pitch: 62,
-  bearing: -24,
+  zoom: 16.0,
+  pitch: 66,
+  bearing: -28,
   maxPitch: 85,
   antialias: true
 });
@@ -139,11 +132,11 @@ function getSeverityClass(pct) {
 function parseDimensionMeters(props, heightKey, levelsKey, fallback) {
   if (props[heightKey]) {
     const parsed = parseFloat(String(props[heightKey]).replace(/[^\d.-]/g, ""));
-    if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
   }
   if (props[levelsKey]) {
     const levels = parseFloat(String(props[levelsKey]).replace(/[^\d.-]/g, ""));
-    if (!Number.isNaN(levels) && levels >= 0) return levels * 4;
+    if (!Number.isNaN(levels) && levels > 0) return levels * 5;
   }
   return fallback;
 }
@@ -155,36 +148,34 @@ function enrichGeoJson(geojson) {
       (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon")
   );
 
-  // Collect named campus buildings so unnamed building:part tiers inherit their parent name & crowd density
-  const namedParentBuildings = geojson.features
-    .filter((f) => f.properties && f.properties.name && !f.properties["building:part"])
+  const namedParents = geojson.features
+    .filter((f) => f.properties && !f.properties["building:part"])
     .map((f) => ({
-      name: f.properties.name,
+      name: f.properties.name || null,
       ring: getOuterRing(f.geometry),
-      feature: f
+      feature: f,
+      partCount: 0
     }));
 
-  const parentFeaturesWithParts = new Set();
-
+  // Link building:part tiers to their enclosing parent building so outer shells don't z-fight
   geojson.features.forEach((feature) => {
     const props = feature.properties || {};
-    const isPart = Boolean(props["building:part"]);
-
-    if (isPart) {
+    if (props["building:part"]) {
       const center = getPolygonCenter(feature.geometry);
-      const enclosingParent = namedParentBuildings.find((parent) =>
-        isPointInRing(center, parent.ring)
-      );
-      if (enclosingParent) {
-        if (!props.name) {
-          props.name = enclosingParent.name;
+      const match = namedParents.find((p) => isPointInRing(center, p.ring));
+      if (match) {
+        match.partCount += 1;
+        if (!props.name && match.name) {
+          props.name = match.name;
         }
-        parentFeaturesWithParts.add(enclosingParent.feature);
       }
     }
   });
 
-  // Keep consistent random fallback values per building name across updates
+  const parentShellsWithParts = new Set(
+    namedParents.filter((p) => p.partCount >= 2).map((p) => p.feature)
+  );
+
   const fallbackOccupancyByName = {};
 
   geojson.features.forEach((feature) => {
@@ -192,20 +183,27 @@ function enrichGeoJson(geojson) {
     const isPart = Boolean(props["building:part"]);
     const name = props.name || "UTK Campus Building";
 
-    const renderBase = parseDimensionMeters(
-      props,
-      "min_height",
-      "building:min_level",
-      0
+    // Lift base 5cm above ground plane to eliminate ground-level z-fighting
+    const renderBase = Math.max(
+      0.05,
+      parseDimensionMeters(props, "min_height", "building:min_level", 0.05)
     );
-    let renderHeight = parseDimensionMeters(
-      props,
-      "height",
-      "building:levels",
-      isPart ? renderBase + 6 : 12
-    );
+
+    let renderHeight =
+      !isPart && BUILDING_HEIGHT_OVERRIDES[name]
+        ? BUILDING_HEIGHT_OVERRIDES[name]
+        : parseDimensionMeters(
+            props,
+            "height",
+            "building:levels",
+            isPart ? renderBase + 10 : 18
+          );
+
+    if (!isPart && renderHeight < 15) {
+      renderHeight = 15;
+    }
     if (renderHeight <= renderBase) {
-      renderHeight = renderBase + 4;
+      renderHeight = renderBase + 8;
     }
 
     const tracked = occupancyData[name];
@@ -220,7 +218,7 @@ function enrichGeoJson(geojson) {
 
     feature.properties.displayName = name;
     feature.properties.isPart = isPart;
-    feature.properties.hasParts = !isPart && parentFeaturesWithParts.has(feature);
+    feature.properties.hasParts = !isPart && parentShellsWithParts.has(feature);
     feature.properties.renderBase = renderBase;
     feature.properties.renderHeight = renderHeight;
     feature.properties.occupancy = occupancy;
@@ -236,7 +234,6 @@ function renderSidebarList(filterText = "") {
   const listEl = document.getElementById("buildingList");
   const query = filterText.trim().toLowerCase();
 
-  // Deduplicate sidebar entries by building name (preferring main footprint over individual roof parts)
   const byName = new Map();
   campusGeoJson.features.forEach((f) => {
     const name = f.properties.name;
@@ -264,7 +261,8 @@ function renderSidebarList(filterText = "") {
     `;
     li.addEventListener("click", () => {
       const center = getPolygonCenter(feature.geometry);
-      map.flyTo({ center, zoom: 17.6, pitch: 66 });
+      is3DView = true;
+      map.flyTo({ center, zoom: 17.5, pitch: 68, bearing: -25 });
       showBuildingPopup(center, feature.properties, feature.id);
     });
     listEl.appendChild(li);
@@ -277,7 +275,7 @@ function showBuildingPopup(lngLat, props, id) {
     .setHTML(`
       <strong>${props.displayName}</strong><br/>
       Crowd Level: <b>${props.occupancy}%</b> (~${props.headcount} people)<br/>
-      Elevation: ${Math.round(props.renderBase)}–${Math.round(props.renderHeight)} m<br/>
+      3D Height: ${Math.round(props.renderHeight)} m<br/>
       <small style="color:#6b7280">ID: ${id || "N/A"}</small>
     `)
     .addTo(map);
@@ -311,64 +309,95 @@ async function fetchUtkBuildings() {
   }
 }
 
-function addF4Citywide3DContext() {
-  const style = map.getStyle();
-  if (!style || !style.sources) return;
+// Convert any legacy MapLibre filter to modern expression syntax before combining with within()
+function toExpressionFilter(f) {
+  if (!f || !Array.isArray(f)) return null;
+  const op = f[0];
+  if (op === "all" || op === "any") {
+    const parts = f.slice(1).map(toExpressionFilter).filter(Boolean);
+    return parts.length ? [op, ...parts] : null;
+  }
+  if (op === "none") {
+    const parts = f.slice(1).map(toExpressionFilter).filter(Boolean);
+    return parts.length ? ["!", ["any", ...parts]] : null;
+  }
+  if ((op === "==" || op === "!=" || op === "<" || op === "<=" || op === ">" || op === ">=") && typeof f[1] === "string") {
+    return [op, ["get", f[1]], f[2]];
+  }
+  if (op === "!has" && typeof f[1] === "string") {
+    return ["!", ["has", f[1]]];
+  }
+  if (op === "in" && typeof f[1] === "string") {
+    return ["in", ["get", f[1]], ["literal", f.slice(2)]];
+  }
+  if (op === "!in" && typeof f[1] === "string") {
+    return ["!", ["in", ["get", f[1]], ["literal", f.slice(2)]]];
+  }
+  return f;
+}
 
-  const vectorSourceId = Object.keys(style.sources).find(
-    (id) => style.sources[id].type === "vector"
-  );
-  if (!vectorSourceId) return;
+function clipBaseStyleBuildingsOnCampus() {
+  const layers = map.getStyle().layers || [];
+  const outsideUtkExpr = ["!", ["within", UTK_CLIP_POLYGON]];
 
-  // Hide flat 2D building fills from the base map so every building renders in 3D
-  let buildingSourceLayer = "building";
-  (style.layers || []).forEach((layer) => {
-    if (layer["source-layer"] === "building") {
-      buildingSourceLayer = layer["source-layer"];
-      if (layer.type === "fill") {
-        map.setLayoutProperty(layer.id, "visibility", "none");
-      }
+  layers.forEach((layer) => {
+    const isBase3D =
+      layer.type === "fill-extrusion" && layer.id !== "utk-3d-extrusion";
+    const isBase2DBuilding =
+      layer.type === "fill" && layer["source-layer"] === "building";
+
+    if (isBase3D || isBase2DBuilding) {
+      const existingExpr = toExpressionFilter(map.getFilter(layer.id));
+      map.setFilter(
+        layer.id,
+        existingExpr ? ["all", existingExpr, outsideUtkExpr] : outsideUtkExpr
+      );
     }
   });
+}
 
-  // Extrude all surrounding Knoxville & world buildings in crisp F4map architectural stone
-  map.addLayer(
-    {
-      id: "citywide-3d-context",
-      type: "fill-extrusion",
-      source: vectorSourceId,
-      "source-layer": buildingSourceLayer,
-      minzoom: 13.5,
-      filter: ["!=", ["get", "hide_3d"], true],
-      paint: {
-        "fill-extrusion-color": [
-          "interpolate",
-          ["linear"],
-          ["coalesce", ["get", "render_height"], 10],
-          0, "#f2efe9",
-          30, "#e7e2d8",
-          80, "#dad3c5"
-        ],
-        "fill-extrusion-height": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          13.5, 0,
-          14.2, ["coalesce", ["get", "render_height"], 10]
-        ],
-        "fill-extrusion-base": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          13.5, 0,
-          14.2, ["coalesce", ["get", "render_min_height"], 0]
-        ],
-        "fill-extrusion-vertical-gradient": true,
-        "fill-extrusion-opacity": 0.92
+function inject3DControls() {
+  const buttonRow = document.querySelector(".button-row");
+  if (buttonRow && !document.getElementById("tilt3dBtn")) {
+    const tiltBtn = document.createElement("button");
+    tiltBtn.id = "tilt3dBtn";
+    tiltBtn.type = "button";
+    tiltBtn.className = "secondary active";
+    tiltBtn.textContent = "3D: On";
+    tiltBtn.addEventListener("click", () => {
+      is3DView = !is3DView;
+      if (is3DView) {
+        tiltBtn.textContent = "3D: On";
+        tiltBtn.classList.add("active");
+        map.easeTo({ pitch: 66, bearing: -28, duration: 700 });
+      } else {
+        tiltBtn.textContent = "3D: Off";
+        tiltBtn.classList.remove("active");
+        map.easeTo({ pitch: 0, bearing: 0, duration: 700 });
       }
-    },
-    "utk-3d-extrusion"
-  );
+    });
+    buttonRow.appendChild(tiltBtn);
+  }
+
+  const mapEl = document.getElementById("map");
+  if (mapEl && !document.getElementById("tiltHint")) {
+    const hint = document.createElement("div");
+    hint.id = "tiltHint";
+    hint.textContent = "Right-click + drag (or Ctrl + drag) to tilt & orbit in 3D";
+    Object.assign(hint.style, {
+      position: "absolute",
+      bottom: "14px",
+      right: "14px",
+      background: "rgba(17, 24, 39, 0.82)",
+      color: "#ffffff",
+      padding: "6px 12px",
+      borderRadius: "8px",
+      fontSize: "12px",
+      zIndex: "5",
+      pointerEvents: "none"
+    });
+    mapEl.appendChild(hint);
+  }
 }
 
 function simulateLiveUpdate() {
@@ -388,12 +417,16 @@ function simulateLiveUpdate() {
 }
 
 map.on("load", async () => {
-  // F4map-style directional sunlight for crisp sunlit & shaded 3D facades
+  inject3DControls();
+
+  // Remove duplicate base-map 3D/2D buildings inside UTK campus to stop z-fighting
+  clipBaseStyleBuildingsOnCampus();
+
   map.setLight({
     anchor: "viewport",
-    color: "#fff7e8",
-    intensity: 0.55,
-    position: [1.35, 210, 38]
+    color: "#ffffff",
+    intensity: 0.6,
+    position: [1.5, 210, 35]
   });
 
   try {
@@ -412,37 +445,41 @@ map.on("load", async () => {
   ).size;
 
   document.getElementById("statusText").textContent =
-    `Tracking ${uniqueBuildingCount} 3D UTK buildings (+ city 3D)`;
+    `Tracking ${uniqueBuildingCount} 3D UTK buildings`;
 
   map.addSource("utk-buildings", {
     type: "geojson",
     data: campusGeoJson
   });
 
-  // Render UTK campus 3D buildings & multi-level building:part tiers
-  map.addLayer({
-    id: "utk-3d-extrusion",
-    type: "fill-extrusion",
-    source: "utk-buildings",
-    filter: ["!=", ["get", "hasParts"], true],
-    paint: {
-      "fill-extrusion-height": ["get", "renderHeight"],
-      "fill-extrusion-base": ["get", "renderBase"],
-      "fill-extrusion-vertical-gradient": true,
-      "fill-extrusion-opacity": 0.94,
-      "fill-extrusion-color": [
-        "interpolate",
-        ["linear"],
-        ["get", "occupancy"],
-        20, "#2ecc71",
-        60, "#f1c40f",
-        85, "#e74c3c"
-      ]
-    }
-  });
+  const layers = map.getStyle().layers || [];
+  const firstSymbolLayer = layers.find((l) => l.type === "symbol");
+  const beforeId = firstSymbolLayer ? firstSymbolLayer.id : undefined;
 
-  // Add surrounding Knoxville 3D buildings underneath the UTK layer
-  addF4Citywide3DContext();
+  // Opaque (opacity: 1) extrusion enables proper WebGL depth-buffer occlusion
+  map.addLayer(
+    {
+      id: "utk-3d-extrusion",
+      type: "fill-extrusion",
+      source: "utk-buildings",
+      filter: ["!=", ["get", "hasParts"], true],
+      paint: {
+        "fill-extrusion-height": ["get", "renderHeight"],
+        "fill-extrusion-base": ["get", "renderBase"],
+        "fill-extrusion-vertical-gradient": true,
+        "fill-extrusion-opacity": 1,
+        "fill-extrusion-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "occupancy"],
+          20, "#2ecc71",
+          60, "#f1c40f",
+          85, "#e74c3c"
+        ]
+      }
+    },
+    beforeId
+  );
 
   renderSidebarList();
 
