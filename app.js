@@ -718,9 +718,11 @@ map.on("load", async () => {
 
   renderSidebarList();
 
-  // 5. Silently expand to all ~150+ UTK campus buildings in the background
+// 5. Silently expand to all ~150+ UTK campus buildings in the background
   fetch("./data/utk-buildings.geojson")
     .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+    .catch(() => null)
     .then((localFile) => localFile || fetchFullUtkFootprintsQuietly())
     .then((fullGeoJson) => {
       if (fullGeoJson) updateMapData(fullGeoJson);
