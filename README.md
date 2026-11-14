@@ -1,276 +1,109 @@
-# volhacks-hackathon-26
-volhacks-hackathon-26
+```markdown
+# Vol Map
 
-# Campus Space
+Vol Map is a campus occupancy explorer for the University of Tennessee, Knoxville. It helps students find places to study, eat, meet, and spend time by presenting building information through a searchable dashboard and an interactive 3D map.
 
-A responsive web server for checking occupancy in campus libraries, study rooms, and dining halls.
+The project combines shared occupancy reports with clearly labeled demonstration data to show how campus availability could be tracked and explored.
 
-Find available seats, filter spaces, save favorites, and submit headcount updates.
+## What You Can Do
 
-> This version uses sample data. Occupancy reports and favorites are stored in your browser and are not shared between users or devices.
+### Explore Campus Spaces
 
-## Features
+The main dashboard displays campus buildings as cards with information such as:
 
-- Campus occupancy summary
-- Available seat counts for each space
-- Filters for libraries, study rooms, and dining halls
-- Search by name, location, category, or amenity
-- Sort by available seats or lowest occupancy
-- Save favorite spaces
-- View space details
-- Submit and validate occupancy reports
-- Save reports and favorites using localStorage
-- Responsive layouts for desktop and mobile
+- Building name and location
+- Capacity, when available
+- Reported occupancy and available seats
+- Crowd-level indicators
+- Report age and data source
 
-## Technologies
+Students can search by building name, location, or amenity; filter by category; and sort by availability or crowd level. A Clear filters control restores the full list.
 
-- HTML5
-- CSS3
-- JavaScript
-- Browser localStorage
-- Google Fonts
-- Inline SVG illustrations
+### Browse Residence Halls
 
-No framework, package installation, or build step is required.
+The Residence halls filter provides access to a floor-by-floor study-room view. Each included hall has two demonstration study rooms per floor, with room capacity, occupancy, availability, and amenities.
 
-## Folder Structure
+These room layouts are illustrative. Floor counts come from the supplied map data where available, with missing counts labeled as estimates.
 
-```text
-campus-space/
-├── index.html
-├── css/
-│   └── styles.css
-├── js/
-│   └── server.js
-└── README.md
+### Explore the 3D Map
+
+The map displays campus building footprints in 3D using MapLibre GL. Users can search for buildings, select them for more information, and switch between tilted 3D and overhead views.
+
+Buildings are colored by crowd level, making it easier to compare activity across campus.
+
+### Simulate Occupancy Over Time
+
+A time slider lets users explore simulated occupancy throughout a typical day in 15-minute increments. Playback animates those changes, updating building colors, estimated headcounts, the building list, and open information popups.
+
+The simulation uses different patterns for different building types. For example, libraries become busier later in the day, while dining spaces peak around meal times.
+
+The timeline is a demonstration, not recorded history or a prediction. It does not write changes to Supabase.
+
+### Submit Occupancy Reports
+
+Users can sign in through an emailed link and submit a headcount for a building. Supabase validates the submission, stores it in report history, and updates the building’s current occupancy.
+
+Saved spaces let students quickly return to buildings they use frequently. Favorites are currently stored in the browser.
+
+## How the Project Works
+
+### Frontend
+
+The interface is built with HTML, CSS, and JavaScript.
+
+JavaScript loads building records from Supabase and renders the dashboard. It also handles searching, filtering, sorting, saved spaces, building details, and residence-hall study-room navigation.
+
+The dashboard refreshes approximately every 30 seconds while the page is visible.
+
+### Database and Authentication
+
+Supabase provides the PostgreSQL database and email-link authentication.
+
+The database stores:
+
+- Building names, locations, map IDs, and footprints
+- Capacities and explanations of demo estimates
+- Occupancy reports and submission timestamps
+- Residence-hall floor information and demonstration study rooms
+- Building visibility settings
+
+Row Level Security controls access to records. Visitors can browse building availability, while signed-in users submit reports through a database function that validates counts.
+
+### Availability Calculations
+
+When a building has both a capacity and a fresh occupancy report:
+
+- Available seats are calculated by subtracting occupancy from capacity.
+- Occupancy percentage is calculated by dividing occupancy by capacity.
+- A status label indicates whether the building is available, filling up, busy, or full.
+
+Unknown occupancy is kept separate from zero occupancy. Reports become stale after the configured freshness window, which defaults to 30 minutes.
+
+Dashboard seat totals and crowd recommendations use fresh reports with known capacities. Buildings without enough information remain visible, but their availability is shown as unknown.
+
+## Data and Demonstration Features
+
+Vol Map uses building footprints and metadata from the supplied campus map dataset. Specific building names and street addresses are retained; vague landmark-based placeholders are hidden.
+
+Where verified capacities are unavailable, the demo uses estimates based on building names, likely uses, footprint areas, and floor counts. These estimates are labeled and are not official occupancy limits.
+
+Simulated counts help demonstrate the interface before live reporting or sensor integrations are available. They are identified separately from user-submitted reports.
+
+The map simulation and dashboard reports are separate data flows. Moving the map’s time slider does not change the dashboard’s shared occupancy records.
+
+## Current Scope
+
+Vol Map is a working prototype rather than a live campus monitoring system. It does not currently include:
+
+- Automatic occupancy sensors
+- Verified capacities for every building
+- Verified residence-hall study-room inventories
+- Seat reservations or guaranteed availability
+- Historical playback of actual campus occupancy
+
+Future development could connect campus data feeds or sensors, verify building and room information, and use collected reports to support historical occupancy analysis.
+
+## Project Goal
+
+Vol Map aims to make campus spaces easier to discover and compare. By bringing location, occupancy, and availability into one interface, it helps students spend less time searching for a space and more time using it.
 ```
-
-| File | Purpose |
-|---|---|
-| `index.html` | Page structure, navigation, filters, and details dialog |
-| `css/styles.css` | Colors, typography, cards, and responsive layouts |
-| `js/server.js` | Sample data, rendering, search, sorting, favorites, and reports |
-| `README.md` | Project documentation |
-
-## Getting Started
-
-### Option 1: Open the HTML File
-
-Open `index.html` in a modern web browser.
-
-For more consistent browser storage behavior, use a local server.
-
-### Option 2: Run a Local Server
-
-With Python 3 installed, open a terminal in the project folder and run:
-
-```bash
-python3 -m http.server 8000
-```
-
-Visit:
-
-```text
-http://localhost:8000
-```
-
-Press `Ctrl+C` in the terminal to stop the server.
-
-## Using the App
-
-### Find a Space
-
-1. Select a category or keep **All spaces** selected.
-2. Search for a space, location, or amenity.
-3. Choose a sorting option.
-4. Select **View space** to see details.
-
-### Save a Space
-
-Click the star on a space card.
-
-Select **Saved spaces** in the navigation to view your favorites. Click the star again to remove a favorite.
-
-### Report Occupancy
-
-1. Select **View space**.
-2. Enter the number of people currently using the space.
-3. Select **Update**.
-
-The count must be a whole number between zero and the space’s capacity.
-
-The server updates the available seats, occupancy percentage, campus summary, and recommendation.
-
-## Occupancy Calculations
-
-```text
-Available seats = Capacity − Occupied seats
-
-Occupancy percentage = (Occupied seats ÷ Capacity) × 100
-```
-
-### Status Labels
-
-| Occupancy | Status |
-|---|---|
-| Below 50% | Available |
-| 50% to below 80% | Filling up |
-| 80% to below capacity | Busy |
-| At capacity | Full |
-
-Percentages are rounded to the nearest whole number for display.
-
-## Customizing Campus Spaces
-
-Edit the `INITIAL_SPACES` array in `js/server.js`.
-
-Example record:
-
-```javascript
-{
-  id: 7,
-  name: "East Library",
-  category: "Library",
-  location: "East campus · Floor 1",
-  capacity: 80,
-  occupied: 20,
-  amenities: ["Wi-Fi", "Outlets", "Silent study"],
-  background: "#e4e8dc",
-  artwork: "library"
-}
-```
-
-### Supported Values
-
-**Category:**
-
-- `Library`
-- `Study room`
-- `Dining hall`
-
-**Artwork:**
-
-- `library`
-- `room`
-- `dining`
-
-Give every space a unique numeric `id`. Capacity should be a positive whole number, and occupancy should be between zero and capacity.
-
-Saved reports override the initial occupancy for matching IDs. Clear browser storage when you want to reset the demo after changing sample data.
-
-## Customizing the Design
-
-Edit `css/styles.css`.
-
-The main colors are defined at the top:
-
-```css
-:root {
-  --background: #f7f8f3;
-  --surface: #ffffff;
-  --green: #176249;
-  --ink: #203a32;
-  --muted: #7b8680;
-  --border: #e1e7df;
-
-  --available: #79a180;
-  --moderate: #c7aa60;
-  --busy: #c78b72;
-}
-```
-
-Google Fonts supplies DM Sans and Manrope. System fonts are used as fallbacks if those fonts cannot load.
-
-## Browser Storage
-
-The server uses these localStorage keys:
-
-| Key | Contents |
-|---|---|
-| `campus-space:favorites` | IDs of saved spaces |
-| `campus-space:reports` | Reported occupancy counts and timestamps |
-
-Data is stored for the current browser and origin. It is not synchronized across devices or users.
-
-If browser storage is unavailable, changes remain available for the current page session.
-
-### Reset Saved Data
-
-Run this in your browser’s developer console while the server is open:
-
-```javascript
-localStorage.removeItem("campus-space:favorites");
-localStorage.removeItem("campus-space:reports");
-window.location.reload();
-```
-
-This removes the server’s saved favorites and occupancy reports from that browser.
-
-## Adding Shared Dynamic Data
-
-A shared version needs a backend API, a database, and a source of occupancy updates.
-
-A possible data model is:
-
-```text
-spaces
-├── id
-├── name
-├── category
-├── location
-└── capacity
-
-occupancy_reports
-├── id
-├── space_id
-├── occupied
-├── source
-└── reported_at
-```
-
-Suggested API endpoints:
-
-```text
-GET  /api/spaces
-GET  /api/spaces/:id
-POST /api/spaces/:id/reports
-```
-
-To connect the frontend:
-
-1. Load spaces from the API instead of `INITIAL_SPACES`.
-2. Send occupancy reports to the backend.
-3. Validate counts against capacity on the server.
-4. Refresh data through polling, Server-Sent Events, or WebSockets.
-5. Display the report source and update time.
-6. Mark old reports as stale.
-7. Add authentication and staff permissions where needed.
-
-Possible data sources include student reports, QR check-ins, door counters, and existing campus systems.
-
-## Current Limitations
-
-- Occupancy starts with sample data.
-- Reports are saved only in the current browser.
-- No shared database or backend is included.
-- No sensor or campus system integration is included.
-- No authentication or staff administration is included.
-- Reports do not expire automatically.
-- Availability does not reserve or guarantee a seat.
-- Google Fonts requires an internet connection; the server has fallback fonts.
-
-## Manual Testing Checklist
-
-- [ ] All six sample spaces appear.
-- [ ] Category filters display the correct spaces.
-- [ ] Search matches names, locations, and amenities.
-- [ ] Sorting orders spaces correctly.
-- [ ] Stars add and remove saved spaces.
-- [ ] Saved spaces remain after reloading.
-- [ ] Space details open and close.
-- [ ] Valid occupancy reports update the cards and summary.
-- [ ] Negative counts, decimals, and counts above capacity are rejected.
-- [ ] Reports remain after reloading.
-- [ ] Empty search results show a helpful message.
-- [ ] The layout works on mobile and desktop.
-- [ ] Controls can be used with a keyboard.
