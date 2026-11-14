@@ -1,138 +1,23 @@
 "use strict";
 
-/*
- * Sample campus data.
- * Change these records to match your campus.
- */
-const INITIAL_SPACES = [
-    {
-        id: 1,
-        name: "Central Library",
-        category: "Library",
-        location: "Main campus · 3 floors",
-        capacity: 240,
-        occupied: 142,
-        amenities: ["Quiet zones", "Wi-Fi", "Outlets"],
-        background: "#e4e8dc",
-        artwork: "library"
-    },
-    {
-        id: 2,
-        name: "Study Room 204",
-        category: "Study room",
-        location: "Learning Commons · Floor 2",
-        capacity: 8,
-        occupied: 2,
-        amenities: ["Whiteboard", "Group study", "Outlets"],
-        background: "#e9e2d6",
-        artwork: "room"
-    },
-    {
-        id: 3,
-        name: "The Commons",
-        category: "Dining hall",
-        location: "Student Center · Ground floor",
-        capacity: 180,
-        occupied: 153,
-        amenities: ["Hot meals", "Coffee", "Social"],
-        background: "#e9dfd5",
-        artwork: "dining"
-    },
-    {
-        id: 4,
-        name: "North Library",
-        category: "Library",
-        location: "North campus · 2 floors",
-        capacity: 120,
-        occupied: 29,
-        amenities: ["Silent study", "Wi-Fi", "Natural light"],
-        background: "#dde6df",
-        artwork: "library"
-    },
-    {
-        id: 5,
-        name: "Study Room 108",
-        category: "Study room",
-        location: "Science Building · Floor 1",
-        capacity: 6,
-        occupied: 6,
-        amenities: ["Whiteboard", "Display", "Group study"],
-        background: "#dfe5e8",
-        artwork: "room"
-    },
-    {
-        id: 6,
-        name: "Garden Dining",
-        category: "Dining hall",
-        location: "West campus · Garden level",
-        capacity: 100,
-        occupied: 34,
-        amenities: ["Outdoor seats", "Plant-based", "Coffee"],
-        background: "#e7e8d7",
-        artwork: "dining"
-    }
-];
-
-const STORAGE_KEYS = {
-    favorites: "campus-space:favorites",
-    reports: "campus-space:reports"
-};
-
-/* Storage helpers */
-
+// Occupancy comes from Supabase. Favorites stay on this device.
+const STORAGE_KEYS = { favorites: "campus-space:favorites" };
 function readStorage(key, fallback) {
-    try {
-        const value = localStorage.getItem(key);
-
-        return value === null ? fallback : JSON.parse(value);
-    } catch {
-        return fallback;
-    }
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+    catch { return fallback; }
 }
-
 function writeStorage(key, value) {
-    try {
-        localStorage.setItem(key, JSON.stringify(value));
-        return true;
-    } catch {
-        return false;
-    }
+    try { localStorage.setItem(key, JSON.stringify(value)); }
+    catch { /* Favorites remain available for this session. */ }
 }
-
 const storedFavorites = readStorage(STORAGE_KEYS.favorites, []);
-
-const favorites = new Set(
-    Array.isArray(storedFavorites)
-        ? storedFavorites.filter(
-            id => INITIAL_SPACES.some(space => space.id === id)
-        )
-        : []
-);
-
-const storedReports = readStorage(STORAGE_KEYS.reports, {});
-
-const reports =
-    storedReports &&
-    typeof storedReports === "object" &&
-    !Array.isArray(storedReports)
-        ? storedReports
-        : {};
-
-const spaces = INITIAL_SPACES.map(space => {
-    const report = reports[space.id];
-
-    const validReport =
-        report &&
-        Number.isInteger(report.occupied) &&
-        report.occupied >= 0 &&
-        report.occupied <= space.capacity;
-
-    return {
-        ...space,
-        occupied: validReport ? report.occupied : space.occupied,
-        reportedAt: validReport ? report.updatedAt : null
-    };
-});
+const favorites = new Set(Array.isArray(storedFavorites) ? storedFavorites : []);
+let spaces = [];
+let loading = true;
+let loadError = "";
+let fetching = false;
+let submitting = false;
+const client = window.db || (typeof db !== "undefined" ? db : null);
 
 /* Application state */
 
@@ -177,33 +62,29 @@ const elements = {
 
 /* Data helpers */
 
+function hasCurrentReport(space) {
+    const timestamp = Date.parse(space.occupancy_updated_at);
+    return space.is_fresh === true && Number.isInteger(space.occupied) &&
+        Number.isFinite(timestamp) &&
+        Date.now() < timestamp + space.stale_after_minutes * 60000;
+}
 function getAvailableSeats(space) {
-    return space.capacity - space.occupied;
+    return hasCurrentReport(space) ? space.capacity - space.occupied : null;
 }
 
 function getOccupancyPercentage(space) {
-    if (space.capacity <= 0) {
-        return 0;
-    }
-
-    return Math.round((space.occupied / space.capacity) * 100);
+    return hasCurrentReport(space)
+        ? Math.round(space.occupied / space.capacity * 100) : null;
 }
 
 function getOccupancyStatus(space) {
-    const percentage = getOccupancyPercentage(space);
-
-    if (space.occupied >= space.capacity) {
-        return { className: "busy", label: "Full" };
+    if (!hasCurrentReport(space)) {
+        return { className: "unknown", label: space.occupancy_updated_at ? "Stale" : "No reports" };
     }
-
-    if (percentage >= 80) {
-        return { className: "busy", label: "Busy" };
-    }
-
-    if (percentage >= 50) {
-        return { className: "moderate", label: "Filling up" };
-    }
-
+    const ratio = space.occupied / space.capacity;
+    if (ratio >= 1) return { className: "busy", label: "Full" };
+    if (ratio >= .8) return { className: "busy", label: "Busy" };
+    if (ratio >= .5) return { className: "moderate", label: "Filling up" };
     return { className: "available", label: "Available" };
 }
 
@@ -227,36 +108,12 @@ function escapeHtml(value) {
 }
 
 function getReportLabel(space) {
-    if (!space.reportedAt) {
-        return "Sample occupancy";
-    }
-
-    const timestamp = Date.parse(space.reportedAt);
-
-    if (!Number.isFinite(timestamp)) {
-        return "Your report · this device";
-    }
-
-    const minutes = Math.max(
-        0,
-        Math.floor((Date.now() - timestamp) / 60000)
-    );
-
-    if (minutes < 1) {
-        return "Your report · just now";
-    }
-
-    if (minutes < 60) {
-        return `Your report · ${minutes}m ago`;
-    }
-
-    const hours = Math.floor(minutes / 60);
-
-    if (hours < 24) {
-        return `Your report · ${hours}h ago`;
-    }
-
-    return "Your report · " + new Date(timestamp).toLocaleDateString();
+    const timestamp = Date.parse(space.occupancy_updated_at);
+    if (!Number.isFinite(timestamp)) return "No occupancy reports yet";
+    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+    const age = minutes < 1 ? "just now" : minutes < 60 ? `${minutes}m ago` :
+        new Date(timestamp).toLocaleString();
+    return `${hasCurrentReport(space) ? "Updated" : "Stale report"} · ${age}`;
 }
 
 /* Decorative SVG illustrations */
@@ -375,26 +232,15 @@ function getArtwork(type) {
 /* Rendering */
 
 function renderSummary() {
-    const totalCapacity = spaces.reduce(
-        (total, space) => total + space.capacity,
-        0
-    );
-
-    const totalOccupied = spaces.reduce(
-        (total, space) => total + space.occupied,
-        0
-    );
-
-    const available = totalCapacity - totalOccupied;
-
-    const percentage =
-        totalCapacity > 0
-            ? Math.round((totalOccupied / totalCapacity) * 100)
-            : 0;
-
-    elements.availableSeats.textContent = available.toLocaleString();
-    elements.spaceCount.textContent = spaces.length;
-    elements.campusOccupancy.textContent = `${percentage}%`;
+    const known = spaces.filter(hasCurrentReport);
+    const capacity = known.reduce((sum, space) => sum + space.capacity, 0);
+    const occupied = known.reduce((sum, space) => sum + space.occupied, 0);
+    elements.availableSeats.textContent = capacity ? (capacity - occupied).toLocaleString() : "—";
+    elements.spaceCount.textContent = loading ? "—" : spaces.length;
+    elements.campusOccupancy.textContent = capacity ? `${Math.round(occupied / capacity * 100)}%` : "—";
+    const descriptions = document.querySelectorAll(".stat-description");
+    if (descriptions[0]) descriptions[0].textContent = `${known.length} of ${spaces.length} spaces have fresh reports`;
+    if (descriptions[2]) descriptions[2].textContent = "Based on spaces with fresh reports";
 }
 
 function getVisibleSpaces() {
@@ -423,14 +269,15 @@ function getVisibleSpaces() {
 
     if (state.sort === "available") {
         visibleSpaces.sort(
-            (a, b) => getAvailableSeats(b) - getAvailableSeats(a)
+            (a, b) => (getAvailableSeats(b) ?? -1) - (getAvailableSeats(a) ?? -1)
         );
     }
 
     if (state.sort === "quiet") {
         visibleSpaces.sort(
             (a, b) =>
-                a.occupied / a.capacity - b.occupied / b.capacity
+                (hasCurrentReport(a) ? a.occupied / a.capacity : Infinity) -
+                (hasCurrentReport(b) ? b.occupied / b.capacity : Infinity)
         );
     }
 
@@ -444,12 +291,14 @@ function createSpaceCard(space) {
     const isSaved = favorites.has(space.id);
 
     const name = escapeHtml(space.name);
+    const known = hasCurrentReport(space);
+    const background = /^#[0-9a-f]{6}$/i.test(space.background) ? space.background : "#e4e8dc";
 
     return `
     <article class="space-card">
       <div
         class="space-art"
-        style="--art-background: ${space.background}"
+        style="--art-background: ${background}"
       >
         ${getArtwork(space.artwork)}
 
@@ -482,27 +331,19 @@ function createSpaceCard(space) {
 
         <div class="occupancy-summary">
           <span>
-            <strong>${available}</strong>
-            of ${space.capacity} seats free
+            <strong>${known ? available : "—"}</strong>
+            ${known ? `of ${space.capacity} seats free` : "Availability unknown"}
           </span>
 
-          <span>${percentage}% occupied</span>
+          <span>${known ? `${percentage}% occupied` : status.label}</span>
         </div>
 
-        <div
-          class="occupancy-bar"
-          role="meter"
-          aria-label="${name} occupancy"
-          aria-valuemin="0"
-          aria-valuemax="${space.capacity}"
-          aria-valuenow="${space.occupied}"
-          aria-valuetext="${space.occupied} of ${space.capacity} seats occupied"
-        >
-          <div
-            class="occupancy-fill ${status.className}"
-            style="width: ${percentage}%"
-          ></div>
-        </div>
+        ${known ? `
+        <div class="occupancy-bar" role="meter"
+          aria-label="${name} occupancy" aria-valuemin="0"
+          aria-valuemax="${space.capacity}" aria-valuenow="${space.occupied}">
+          <div class="occupancy-fill ${status.className}" style="width:${percentage}%"></div>
+        </div>` : `<p class="space-location" style="margin:10px 0 15px">Capacity: ${space.capacity} seats · A fresh report is needed</p>`}
 
         <div class="amenities">
           ${space.amenities.map(amenity => `
@@ -526,6 +367,11 @@ function createSpaceCard(space) {
 }
 
 function renderSpaces() {
+    if (loading || (loadError && spaces.length === 0)) {
+        elements.resultsCount.textContent = "";
+        elements.grid.innerHTML = `<div class="empty-state" role="status">${escapeHtml(loading ? "Loading campus spaces…" : loadError)}${loading ? "" : '<br><button type="button" data-retry>Retry</button>'}</div>`;
+        return;
+    }
     const visibleSpaces = getVisibleSpaces();
 
     elements.resultsHeading.textContent =
@@ -552,14 +398,15 @@ function renderSpaces() {
 }
 
 function renderRecommendation() {
-    const leastCrowded = [...spaces].sort(
+    const leastCrowded = spaces.filter(hasCurrentReport).sort(
         (a, b) =>
-            a.occupied / a.capacity - b.occupied / b.capacity
+            (hasCurrentReport(a) ? a.occupied / a.capacity : Infinity) -
+            (hasCurrentReport(b) ? b.occupied / b.capacity : Infinity)
     )[0];
 
     if (!leastCrowded) {
         elements.recommendation.textContent =
-            "Add campus spaces to see recommendations.";
+            loadError || "No fresh occupancy reports yet. Availability will appear after a report is submitted.";
 
         return;
     }
@@ -604,70 +451,125 @@ function openSpaceDetails(spaceId) {
     elements.dialogTitle.textContent = space.name;
     elements.dialogLocation.textContent = space.location;
     elements.dialogAmenities.textContent = space.amenities.join(" · ");
-    elements.dialogAvailable.textContent = getAvailableSeats(space);
+    elements.dialogAvailable.textContent = getAvailableSeats(space) ?? "Unknown";
 
     elements.occupancyInput.max = space.capacity;
-    elements.occupancyInput.value = space.occupied;
+    elements.occupancyInput.value = hasCurrentReport(space) ? space.occupied : "";
     elements.occupancyInput.setCustomValidity("");
 
-    elements.reportFeedback.textContent = "";
+    elements.reportFeedback.textContent = "Submitting reports requires a signed-in Supabase user.";
 
     elements.dialog.showModal();
 }
 
 /* Occupancy reporting */
 
-function submitOccupancyReport(event) {
+async function submitOccupancyReport(event) {
     event.preventDefault();
-
-    const space = spaces.find(
-        item => item.id === state.selectedSpaceId
-    );
-
-    if (!space) {
-        return;
-    }
-
-    const rawValue = elements.occupancyInput.value.trim();
-    const occupied = Number(rawValue);
-
-    const valid =
-        rawValue !== "" &&
-        Number.isInteger(occupied) &&
-        occupied >= 0 &&
-        occupied <= space.capacity;
-
-    if (!valid) {
-        elements.occupancyInput.setCustomValidity(
-            `Enter a whole number between 0 and ${space.capacity}.`
-        );
-
+    if (submitting) return;
+    const space = spaces.find(item => item.id === state.selectedSpaceId);
+    if (!space) return;
+    const raw = elements.occupancyInput.value.trim();
+    const occupied = Number(raw);
+    if (!raw || !Number.isInteger(occupied) || occupied < 0 || occupied > space.capacity) {
+        elements.occupancyInput.setCustomValidity(`Enter a whole number between 0 and ${space.capacity}.`);
         elements.occupancyInput.reportValidity();
         return;
     }
-
     elements.occupancyInput.setCustomValidity("");
-
-    const updatedAt = new Date().toISOString();
-
-    space.occupied = occupied;
-    space.reportedAt = updatedAt;
-
-    reports[space.id] = {
-        occupied,
-        updatedAt
+    const button = elements.reportForm.querySelector('button[type="submit"]');
+    const selectedId = space.id;
+    const showFeedback = message => {
+        if (state.selectedSpaceId === selectedId) elements.reportFeedback.textContent = message;
     };
-
-    const saved = writeStorage(STORAGE_KEYS.reports, reports);
-
-    elements.dialogAvailable.textContent = getAvailableSeats(space);
-
-    elements.reportFeedback.textContent = saved
-        ? "Updated and saved on this device."
-        : "Updated for this session. Browser storage is unavailable.";
-
-    render();
+    submitting = true;
+    button.disabled = true;
+    try {
+        if (!client) throw new Error("Supabase client is missing. Check supabase-client.js.");
+        const { data: { session }, error: sessionError } = await client.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (!session) {
+            showFeedback("Sign in is required. This page still needs a sign-in form before you can submit reports.");
+            showFeedback("Sign in using the email form near the top of the page, then submit your report again.");
+            return;
+        }
+        const { error } = await client.rpc("submit_occupancy_report", {
+            p_space_id: selectedId, p_occupied: occupied
+        });
+        if (error) throw error;
+        const refreshed = await loadSpaces();
+        showFeedback(refreshed ? "Report saved to Supabase and shared with other visitors." :
+            "Report saved, but refreshing the page data failed. Try reloading.");
+    } catch (error) {
+        showFeedback(`Could not submit report: ${error.message || "Please try again."}`);
+    } finally {
+        submitting = false;
+        button.disabled = false;
+    }
 }
+
+/* Map page */
+
+function setupMapPage() {
+    const nav = document.querySelector(".sidebar nav");
+    const main = document.querySelector("main");
+    if (!nav || !main || document.getElementById("map-page")) return;
+
+    const mapButton = document.createElement("button");
+    mapButton.type = "button";
+    mapButton.className = "nav-button";
+    mapButton.dataset.view = "map";
+    mapButton.setAttribute("aria-pressed", "false");
+    mapButton.textContent = "⌖  Map";
+    nav.appendChild(mapButton);
+
+    // Preserve the existing elements and event handlers when switching pages.
+    const explorePage = document.createElement("div");
+    explorePage.id = "explore-page";
+    const topbar = main.querySelector(".topbar");
+    Array.from(main.children).forEach(child => {
+        if (child !== topbar) explorePage.appendChild(child);
+    });
+    main.appendChild(explorePage);
+
+    const mapPage = document.createElement("section");
+    mapPage.id = "map-page";
+    mapPage.hidden = true;
+    mapPage.setAttribute("aria-labelledby", "map-heading");
+    mapPage.innerHTML = `
+    <div class="page-heading">
+      <h1 id="map-heading" tabindex="-1">Campus map</h1>
+      <p>Find your way to libraries, study rooms, and dining halls.</p>
+    </div>
+    <div id="campus-map" aria-label="Campus map"
+      style="min-height:460px;min-height:min(65vh,650px);border:1px solid var(--border,#e1e7df);border-radius:16px;overflow:hidden;background:var(--surface,#fff)">
+      <!-- Replace this placeholder with your map image, embed, or interactive map. -->
+      <div style="min-height:inherit;display:grid;place-items:center;padding:32px;text-align:center;background:linear-gradient(90deg,#e1e7df55 1px,transparent 1px),linear-gradient(#e1e7df55 1px,transparent 1px);background-size:36px 36px">
+        <div style="padding:28px;border-radius:14px;background:var(--surface,#fff);max-width:340px;box-shadow:0 8px 30px #203a3208">
+          <span aria-hidden="true" style="display:block;color:var(--green,#176249);font-size:42px;margin-bottom:14px">⌖</span>
+          <h2>Your campus, mapped out.</h2>
+          <p style="margin-bottom:0">Your campus map will appear here.</p>
+        </div>
+      </div>
+    </div>
+  `;
+    main.appendChild(mapPage);
+    elements.viewButtons = document.querySelectorAll("[data-view]");
+}
+
+function showPage(view) {
+    const isMap = view === "map";
+    const explorePage = document.getElementById("explore-page");
+    const mapPage = document.getElementById("map-page");
+    if (explorePage) explorePage.hidden = isMap;
+    if (mapPage) mapPage.hidden = !isMap;
+    const breadcrumb = document.querySelector(".topbar > span:first-child");
+    if (breadcrumb) breadcrumb.textContent = "Campus / " +
+        (isMap ? "Map" : view === "saved" ? "Saved spaces" : "Explore spaces");
+    if (isMap) document.getElementById("map-heading")?.focus();
+}
+
+setupMapPage();
 
 /* Events */
 
@@ -689,6 +591,7 @@ elements.categoryButtons.forEach(button => {
 elements.viewButtons.forEach(button => {
     button.addEventListener("click", () => {
         state.view = button.dataset.view;
+        showPage(state.view);
 
         elements.viewButtons.forEach(item => {
             const active = item === button;
@@ -712,6 +615,10 @@ elements.sort.addEventListener("change", event => {
 });
 
 elements.grid.addEventListener("click", event => {
+    if (event.target.closest("[data-retry]")) {
+        loadSpaces();
+        return;
+    }
     const saveButton = event.target.closest("[data-save]");
 
     if (saveButton) {
@@ -750,13 +657,57 @@ elements.reportForm.addEventListener(
     submitOccupancyReport
 );
 
-// Refresh relative report times while the page is open.
-setInterval(() => {
-    if (!elements.dialog.open) {
-        renderSpaces();
+// Shared occupancy is polled every 30 seconds.
+async function loadSpaces() {
+    if (fetching) return false;
+    fetching = true;
+    try {
+        if (!client) throw new Error("Supabase client is missing. Check your script order.");
+        const { data, error } = await client.from("space_status").select("*").order("id");
+        if (error) throw error;
+        spaces = data || [];
+        loadError = "";
+        return true;
+    } catch (error) {
+        loadError = `Could not refresh campus spaces: ${error.message || "Network error"}`;
+        console.error(loadError);
+        return false;
+    } finally {
+        loading = false;
+        fetching = false;
+        // Keep a keyboard user's current card control focused after refresh.
+        const active = document.activeElement;
+        const savedFocus = elements.grid.contains(active)
+            ? active?.dataset?.save : null;
+        const detailFocus = elements.grid.contains(active)
+            ? active?.dataset?.detail : null;
+        render();
+        if (savedFocus) elements.grid.querySelector(`[data-save="${savedFocus}"]`)?.focus();
+        if (detailFocus) elements.grid.querySelector(`[data-detail="${detailFocus}"]`)?.focus();
+        if (loadError) elements.recommendation.textContent = loadError;
+        const selected = spaces.find(space => space.id === state.selectedSpaceId);
+        if (selected) elements.dialogAvailable.textContent = getAvailableSeats(selected) ?? "Unknown";
     }
-}, 60000);
+}
 
-/* Start the app */
+function updatePageLabels() {
+    document.querySelectorAll(".demo-badge").forEach(badge => {
+        if (badge.id !== "dialog-category") badge.textContent = "Shared occupancy";
+    });
+    const campusLabel = document.querySelector(".campus-label span");
+    if (campusLabel) campusLabel.textContent = "Campus occupancy";
+    const description = document.querySelector(".dialog-description");
+    if (description) description.textContent = "Signed-in users can submit headcounts to the shared database. Older reports are marked stale.";
+    const footer = document.querySelector("footer span:last-child");
+    if (footer) footer.textContent = "Refreshes every 30 seconds · Favorites saved on this device";
+}
 
+updatePageLabels();
 render();
+loadSpaces();
+setInterval(() => {
+    if (!document.hidden) loadSpaces();
+}, 30000);
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) loadSpaces();
+});
