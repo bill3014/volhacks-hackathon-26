@@ -11,6 +11,7 @@
     "Hess Hall": { "occupancy": 83, "capacity": 1050 },
     "Tennessee Recreation Center for Students": { "occupancy": 76, "capacity": 1200 },
     "11th Street Parking Garage": { "occupancy": 89, "capacity": 1100 },
-    "Terrace Avenue Parking Garage (G17)": { "occupancy": 52, "capacity": 800 }
+    "Terrace Avenue Parking Garage (G17)": { "occupancy": 52, "capacity": 800 },
+    "Neyland Stadium": {"occupancy": 82, "capacity": 101915 }
   }
 }
