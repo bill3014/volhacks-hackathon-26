@@ -98,6 +98,7 @@ p {
     height: 40px;
     border-radius: 11px;
     background: var(--green);
+    background-color: gray;
     color: white;
     font-size: 26px;
 }
