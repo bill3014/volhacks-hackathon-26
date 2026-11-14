@@ -3,7 +3,7 @@ volhacks-hackathon-26
 
 # Campus Space
 
-A responsive web app for checking occupancy in campus libraries, study rooms, and dining halls.
+A responsive web server for checking occupancy in campus libraries, study rooms, and dining halls.
 
 Find available seats, filter spaces, save favorites, and submit headcount updates.
 
@@ -41,7 +41,7 @@ campus-space/
 ├── css/
 │   └── styles.css
 ├── js/
-│   └── app.js
+│   └── server.js
 └── README.md
 ```
 
@@ -49,7 +49,7 @@ campus-space/
 |---|---|
 | `index.html` | Page structure, navigation, filters, and details dialog |
 | `css/styles.css` | Colors, typography, cards, and responsive layouts |
-| `js/app.js` | Sample data, rendering, search, sorting, favorites, and reports |
+| `js/server.js` | Sample data, rendering, search, sorting, favorites, and reports |
 | `README.md` | Project documentation |
 
 ## Getting Started
@@ -99,7 +99,7 @@ Select **Saved spaces** in the navigation to view your favorites. Click the star
 
 The count must be a whole number between zero and the space’s capacity.
 
-The app updates the available seats, occupancy percentage, campus summary, and recommendation.
+The server updates the available seats, occupancy percentage, campus summary, and recommendation.
 
 ## Occupancy Calculations
 
@@ -122,7 +122,7 @@ Percentages are rounded to the nearest whole number for display.
 
 ## Customizing Campus Spaces
 
-Edit the `INITIAL_SPACES` array in `js/app.js`.
+Edit the `INITIAL_SPACES` array in `js/server.js`.
 
 Example record:
 
@@ -183,7 +183,7 @@ Google Fonts supplies DM Sans and Manrope. System fonts are used as fallbacks if
 
 ## Browser Storage
 
-The app uses these localStorage keys:
+The server uses these localStorage keys:
 
 | Key | Contents |
 |---|---|
@@ -196,7 +196,7 @@ If browser storage is unavailable, changes remain available for the current page
 
 ### Reset Saved Data
 
-Run this in your browser’s developer console while the app is open:
+Run this in your browser’s developer console while the server is open:
 
 ```javascript
 localStorage.removeItem("campus-space:favorites");
@@ -204,7 +204,7 @@ localStorage.removeItem("campus-space:reports");
 window.location.reload();
 ```
 
-This removes the app’s saved favorites and occupancy reports from that browser.
+This removes the server’s saved favorites and occupancy reports from that browser.
 
 ## Adding Shared Dynamic Data
 
@@ -257,7 +257,7 @@ Possible data sources include student reports, QR check-ins, door counters, and 
 - No authentication or staff administration is included.
 - Reports do not expire automatically.
 - Availability does not reserve or guarantee a seat.
-- Google Fonts requires an internet connection; the app has fallback fonts.
+- Google Fonts requires an internet connection; the server has fallback fonts.
 
 ## Manual Testing Checklist
 
